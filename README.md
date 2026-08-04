@@ -8,6 +8,8 @@ Kubernetes. Вся инфраструктура описана в Terraform и �
 командой: сеть, кластер, управляемый PostgreSQL, Object Storage и Lockbox для
 секретов.
 
+**Приложение: http://158.160.197.20**
+
 Исходный код приложения: [titanmen1/project-devops-deploy](https://github.com/titanmen1/project-devops-deploy).
 Образ собирается в CI и публикуется в GitHub Container Registry:
 `ghcr.io/titanmen1/project-devops-deploy:latest`.
@@ -57,23 +59,46 @@ yc version && terraform version && kubectl version --client && helm version --sh
 профиль `yc` (`yc init`). Все команды `make tf-*` сами берут `cloud-id` и
 `folder-id` из профиля и запрашивают свежий IAM-токен.
 
-## Развёртывание инфраструктуры
+## Развёртывание с нуля
+
+Полный цикл — от пустого облака до приложения с мониторингом:
 
 ```bash
-make tf-bootstrap   # сервисный аккаунт, ключ и бакет для состояния Terraform
-make tf-init        # инициализация с backend в Object Storage
-make tf-plan        # проверка плана
-make tf-apply       # создание инфраструктуры (15–20 минут)
-make kubeconfig     # доступ к кластеру
+make tf-bootstrap       # сервисный аккаунт, ключ и бакет для состояния Terraform
+make tf-init            # инициализация с backend в Object Storage
+make tf-plan            # проверка плана
+make tf-apply           # создание инфраструктуры (15–20 минут)
+make kubeconfig         # доступ к кластеру
+
+make ingress-install    # ingress-контроллер на зарезервированном адресе
+make secrets-install    # External Secrets Operator и ключ для чтения Lockbox
+make deploy             # выкат приложения Helm-чартом
+
+make logging-install    # сбор логов подов в Cloud Logging
+make monitoring-install # sidecar с метриками для Yandex Monitoring
+
+make smoke              # проверка приложения снаружи
 ```
 
-## Выкат приложения
+Все команды репозитория:
 
-```bash
-make secrets-install  # External Secrets Operator и ключ для чтения Lockbox
-make deploy           # выкат Helm-чарта
-make k8s-status       # что получилось
-```
+| Команда | Что делает |
+|---|---|
+| `make tf-bootstrap` | заводит бакет и ключи для состояния Terraform |
+| `make tf-init` / `tf-plan` / `tf-apply` / `tf-destroy` | работа с инфраструктурой |
+| `make tf-output` | выводы Terraform: адреса, идентификаторы, доступы |
+| `make kubeconfig` | доступ к кластеру для kubectl и Helm |
+| `make deploy` / `deploy-dev` | выкат чарта в прод или тестовое окружение |
+| `make rollback` / `helm-history` | откат релиза и список ревизий |
+| `make k8s-status` / `k8s-rollout` / `k8s-logs` / `k8s-forward` | состояние и отладка приложения |
+| `make secrets-install` / `secrets-status` | Lockbox через External Secrets Operator |
+| `make ingress-install` / `ingress-ip` | внешний доступ |
+| `make logging-install` / `logs-cloud` | логи в Cloud Logging |
+| `make monitoring-install` | метрики приложения в Monitoring |
+| `make smoke` | проверка приложения по публичному адресу |
+| `make lint` / `test` | проверки Terraform и Helm |
+
+## Приложение в кластере
 
 Приложение живёт в namespace `bulletins`. Конфигурация разложена по двум
 объектам: несекретные параметры — в ConfigMap `bulletin-board-config`, доступы к
@@ -159,11 +184,15 @@ kubectl -n bulletins rollout undo deployment/bulletin-board
 ```text
 k8s/bulletin-board/
 ├── Chart.yaml
-├── values.yaml           # значения по умолчанию (прод)
-├── values-dev.yaml       # окружение для проверок
+├── values.yaml              # значения по умолчанию (прод)
+├── values-dev.yaml          # окружение для проверок
 └── templates/
-    ├── _helpers.tpl      # имена и метки
+    ├── _helpers.tpl         # имена и метки
+    ├── namespace.yaml       # выключен: namespace заводит --create-namespace
     ├── configmap.yaml
+    ├── secret.yaml          # выключен: путь без Lockbox
+    ├── secretstore.yaml     # доступ к Lockbox
+    ├── externalsecret.yaml  # секрет приложения из Lockbox
     ├── deployment.yaml
     ├── service.yaml
     ├── ingress.yaml
@@ -171,10 +200,11 @@ k8s/bulletin-board/
     └── hpa.yaml
 ```
 
-Секрет с доступами чарт не создаёт: он живёт отдельно (`make k8s-secret`,
-а после подключения Lockbox — External Secrets Operator), а Deployment
-подключает его по имени из `secret.existingSecret`. Так пароль базы не
-попадает ни в values, ни в историю релизов Helm.
+Значения секретов в values не лежат: Deployment подключает секрет по имени из
+`secret.existingSecret`, а наполняет его External Secrets Operator из Lockbox.
+Так пароль базы не попадает ни в values, ни в историю релизов Helm. Шаблоны
+`namespace.yaml` и `secret.yaml` по умолчанию выключены — они нужны только
+для окружения без `--create-namespace` и без Lockbox.
 
 В шаблон Deployment зашита аннотация `checksum/config` от ConfigMap — при
 изменении конфигурации поды пересоздаются, иначе приложение продолжило бы

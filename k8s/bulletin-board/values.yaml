@@ -3,6 +3,10 @@
 # values-prod.yaml или ключами --set при выкате.
 
 namespace: bulletins
+# Namespace заводит `helm --create-namespace`, поэтому в релиз он не входит:
+# иначе `helm uninstall` унёс бы вместе с ним ключ сервисного аккаунта.
+createNamespace: false
+
 replicaCount: 2
 
 image:
@@ -41,6 +45,10 @@ config:
 # секрет заводится вручную через `make k8s-secret`.
 secret:
   existingSecret: bulletin-secret
+  # Путь без Lockbox: чарт сам создаёт Secret из secret.values. Значения
+  # передаются через --set или файл values вне репозитория.
+  create: false
+  values: {}
 
 externalSecrets:
   enabled: true

@@ -1,0 +1,12 @@
+{{- if .Values.createNamespace }}
+---
+# По умолчанию выключено: namespace заводит `helm --create-namespace`, и он
+# переживает `helm uninstall` вместе с ключом сервисного аккаунта и конфигом
+# агента метрик. Включайте, если namespace должен жить и умирать с релизом.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ .Values.namespace }}
+  labels:
+    {{- include "bulletin-board.labels" . | nindent 4 }}
+{{- end }}

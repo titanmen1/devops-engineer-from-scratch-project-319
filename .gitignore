@@ -9,6 +9,10 @@ terraform/.backend-credentials
 crash.log
 crash.*.log
 
+# Values с реальными доступами (если понадобится путь без Lockbox)
+k8s/*/values.prod.yaml
+k8s/*/values.local.yaml
+
 # Ключи сервисных аккаунтов и kubeconfig
 *.pem
 sa-key*.json
