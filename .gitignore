@@ -1,3 +1,19 @@
+# Terraform
+.terraform/
+.terraform-validate/
+*.tfstate
+*.tfstate.*
+terraform.tfvars
+terraform/.backend-credentials
+.terraform.tfstate.lock.info
+crash.log
+crash.*.log
+
+# Ключи сервисных аккаунтов и kubeconfig
+*.pem
+sa-key*.json
+kubeconfig*
+
 # IDE и системные файлы
 .idea/
 .vscode/
