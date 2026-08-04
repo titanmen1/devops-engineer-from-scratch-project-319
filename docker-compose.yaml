@@ -1,0 +1,78 @@
+---
+# Локальный прогон того же образа, который едет в кластер: приложение,
+# PostgreSQL вместо Managed PostgreSQL и MinIO вместо Object Storage.
+services:
+  app:
+    image: ${APP_IMAGE:-ghcr.io/titanmen1/project-devops-deploy:latest}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      storage-init:
+        condition: service_completed_successfully
+    environment:
+      SPRING_PROFILES_ACTIVE: prod
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/bulletins
+      SPRING_DATASOURCE_USERNAME: bulletins
+      SPRING_DATASOURCE_PASSWORD: bulletins
+      STORAGE_S3_ENDPOINT: http://storage:9000
+      STORAGE_S3_BUCKET: bulletins-media
+      STORAGE_S3_REGION: ru-central1
+      STORAGE_S3_ACCESSKEY: minioadmin
+      STORAGE_S3_SECRETKEY: minioadmin
+    ports:
+      - "8080:8080"
+      - "9090:9090"
+
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: bulletins
+      POSTGRES_USER: bulletins
+      POSTGRES_PASSWORD: bulletins
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U bulletins -d bulletins"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  storage:
+    image: minio/minio:RELEASE.2024-05-10T01-41-38Z
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+      # Без MINIO_DOMAIN сервер считает первый сегмент пути именем бакета и
+      # запрос в virtual-hosted-style уходит не в тот бакет.
+      MINIO_DOMAIN: storage
+    volumes:
+      - storage_data:/data
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    networks:
+      default:
+        # Приложение ходит в S3 в virtual-hosted-style (<bucket>.<host>), как
+        # это принято у Object Storage. Алиас даёт MinIO такое же имя локально.
+        aliases:
+          - bulletins-media.storage
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # Приложение не создаёт бакет само, поэтому заводим его до старта.
+  storage-init:
+    image: minio/mc:RELEASE.2024-05-09T17-04-24Z
+    depends_on:
+      storage:
+        condition: service_healthy
+    entrypoint: >
+      sh -c "mc alias set local http://storage:9000 minioadmin minioadmin &&
+             mc mb --ignore-existing local/bulletins-media"
+
+volumes:
+  postgres_data:
+  storage_data:
