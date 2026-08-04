@@ -151,6 +151,86 @@ kubectl -n bulletins rollout status deployment/bulletin-board
 kubectl -n bulletins rollout undo deployment/bulletin-board
 ```
 
+## Наблюдаемость
+
+Метрики и логи уезжают в управляемые сервисы Yandex Cloud — отдельный стенд с
+Prometheus и Grafana не поднимается.
+
+### Логи
+
+Логи подов собирает fluent-bit (DaemonSet в namespace `logging`) с плагином
+Yandex Cloud Logging и складывает в лог-группу `bulletins-319-logs`. Срок
+хранения — 7 суток (`logs_retention_period` в *terraform/variables.tf*).
+Собираются только логи namespace `bulletins`: фильтр задан маской файлов
+`/var/log/containers/*_bulletins_*.log`.
+
+```bash
+make logging-install   # DaemonSet + идентификатор лог-группы из Terraform
+make logs-cloud        # последние 20 записей из Cloud Logging
+```
+
+Авторизации по ключам нет: агент представляется сервисным аккаунтом узла,
+которому в *terraform/kubernetes.tf* выдана роль `logging.writer`.
+
+Приложение пишет структурированный JSON, поэтому в fluent-bit включён
+`Merge_Log` — поля `message` и `level` попадают в Cloud Logging как есть.
+Указывать `Merge_Log_Key` при этом нельзя: из вложенного объекта плагин
+сообщение не достаёт, и записи приезжают с пустым текстом.
+
+### Метрики
+
+| Что | Откуда | Сервис в Monitoring |
+|---|---|---|
+| Процессор, память, перезапуски подов | собирает сам Managed Kubernetes | `managed-kubernetes` |
+| HTTP-запросы, задержки, JVM, логи по уровням | sidecar Unified Agent в поде приложения | `custom`, префикс `bulletins.` |
+
+```bash
+make monitoring-install   # ConfigMap с конфигом агента и выкат sidecar
+```
+
+Агент ездит sidecar-контейнером, а не отдельным Deployment: иначе он опрашивал
+бы приложение через Service, и метрики двух реплик перемешивались бы. Метки
+`pod` и `node` на метрики вешает само приложение через
+`MANAGEMENT_METRICS_TAGS_*` — Micrometer добавляет их ко всем сериям.
+
+Две вещи, на которые ушло время и которые стоит помнить:
+
+- В Monitoring метка `name` зарезервирована под имя метрики. Группы
+  `executor_*` и `jdbc_connections_*` используют её в своих данных, из-за чего
+  агент отбраковывал **весь** батч. Обе группы выключены в ConfigMap
+  приложения.
+- Unified Agent отдаёт счётчики Prometheus уже дельтами за интервал сбора,
+  поэтому `rate()` в запросах не нужен — с ним графики остаются пустыми.
+
+### Дашборд
+
+Дашборд `bulletins-319-dashboard` описан в *terraform/observability.tf* и
+создаётся вместе с инфраструктурой. Открыть:
+[Yandex Monitoring → Дашборды → Доска объявлений](https://monitoring.yandex.cloud/folders/b1glbnnomnf50r9g8kef/dashboards/bulletins-319-dashboard).
+
+Восемь графиков: запросы по статусам, средняя задержка, ответы 5xx, записи в
+логах по уровням, процессор и память подов, использование лимита памяти,
+перезапуски контейнеров.
+
+![Дашборд: запросы, задержки, логи](assets/monitoring-dashboard-top.jpg)
+
+![Дашборд: ресурсы подов](assets/monitoring-dashboard-resources.jpg)
+
+### Алерты
+
+Terraform-ресурса и публичного API для алертов у Monitoring нет, поэтому они
+заведены в консоли. Параметры для воспроизведения:
+
+| Алерт | Запрос | Агрегация | Warning | Alarm |
+|---|---|---|---|---|
+| `bulletins-319-5xx` | `series_sum("bulletins.http_server_requests_seconds_count"{service="custom", application="bulletins", status="5*"})` | Сумма | 1 | 10 |
+| `bulletins-319-latency` | `series_sum("bulletins.http_server_requests_seconds_sum"{…}) / series_sum("bulletins.http_server_requests_seconds_count"{…})` | Среднее | 0.5 | 1 |
+| `bulletins-319-restarts` | `series_sum("container.restart_count"{service="managed-kubernetes", namespace="bulletins"})` | Максимум | 3 | 5 |
+
+Во всех трёх окно вычисления 5 минут, задержка 30 секунд, сравнение «Больше».
+
+![Алерты](assets/monitoring-alerts.jpg)
+
 ## Terraform
 
 Конфигурация лежит в *terraform/* и разбита по смыслу:
@@ -167,6 +247,7 @@ kubectl -n bulletins rollout undo deployment/bulletin-board
 | `database.tf` | Managed PostgreSQL, база и пользователь |
 | `storage.tf` | бакет для картинок и ключи доступа к нему |
 | `lockbox.tf` | секрет с доступами приложения |
+| `observability.tf` | лог-группа Cloud Logging и дашборд Monitoring |
 | `outputs.tf` | адреса и идентификаторы для следующих шагов |
 
 Состояние хранится в бакете `bulletins-319-tfstate` с включённым
@@ -207,10 +288,13 @@ make test   # terraform init -backend=false + terraform validate
 
 ```text
 .
+├── assets/                      # скриншоты дашборда и алертов
 ├── bin/tf-bootstrap.sh          # разовая подготовка бакета для состояния
 ├── k8s/
 │   ├── manifests/               # namespace, ConfigMap, Deployment, Service,
 │   │                            # PDB, HPA, Ingress
+│   ├── logging/                 # fluent-bit для Cloud Logging
+│   ├── monitoring/              # конфиг Unified Agent для метрик
 │   ├── ingress-nginx-values.yaml # values для чарта ingress-контроллера
 │   └── secret.example.yaml      # образец секрета, реальные значения не в git
 ├── terraform/                   # инфраструктура Yandex Cloud

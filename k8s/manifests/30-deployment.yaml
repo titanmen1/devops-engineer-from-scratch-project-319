@@ -54,6 +54,17 @@ spec:
                 name: bulletin-config
             - secretRef:
                 name: bulletin-secret
+          # Micrometer вешает эти значения метками на все метрики приложения,
+          # поэтому серии разных реплик не сливаются в Monitoring.
+          env:
+            - name: MANAGEMENT_METRICS_TAGS_POD
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: MANAGEMENT_METRICS_TAGS_NODE
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
           # Под исчезает из endpoints не мгновенно: балансировщик успевает
           # послать запрос в уже удаляемый под. Пауза перед остановкой даёт
           # правилам обновиться — без неё часть запросов при выкате рвётся.
@@ -91,3 +102,25 @@ spec:
             timeoutSeconds: 3
             failureThreshold: 3
 
+        # Забирает метрики Actuator этого пода и отправляет их в Yandex
+        # Monitoring. Авторизуется через метаданные узла — ключей нет.
+        - name: unified-agent
+          image: cr.yandex/yc/unified-agent:latest
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "64Mi"
+            limits:
+              cpu: "200m"
+              memory: "192Mi"
+          volumeMounts:
+            - name: unified-agent-config
+              mountPath: /etc/yandex/unified_agent/conf.d/
+            - name: unified-agent-data
+              mountPath: /var/lib/yandex/unified_agent/main
+      volumes:
+        - name: unified-agent-config
+          configMap:
+            name: unified-agent-config
+        - name: unified-agent-data
+          emptyDir: {}

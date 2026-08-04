@@ -149,6 +149,14 @@ variable "db_user" {
   default     = "bulletins"
 }
 
+# --- Наблюдаемость -----------------------------------------------------------
+
+variable "logs_retention_period" {
+  description = "Срок хранения логов приложения в Cloud Logging"
+  type        = string
+  default     = "168h"
+}
+
 # --- Object Storage ----------------------------------------------------------
 
 variable "bucket_name" {

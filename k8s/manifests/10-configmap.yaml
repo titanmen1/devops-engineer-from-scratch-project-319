@@ -15,3 +15,8 @@ data:
   # Heap считается от лимита памяти контейнера, но задаём явно, чтобы предел
   # не зависел от того, как JVM прочитает cgroup.
   JAVA_OPTS: "-Xms256m -Xmx640m"
+  # В Yandex Monitoring метка name зарезервирована под имя метрики. Группы
+  # executor_* и jdbc_connections_* используют её в своих данных, из-за чего
+  # агент отбраковывает весь батч метрик целиком — поэтому выключаем их.
+  MANAGEMENT_METRICS_ENABLE_EXECUTOR: "false"
+  MANAGEMENT_METRICS_ENABLE_JDBC: "false"

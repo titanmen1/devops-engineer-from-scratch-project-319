@@ -5,7 +5,7 @@ NAMESPACE := bulletins
 .PHONY: tf-bootstrap tf-init tf-plan tf-apply tf-destroy tf-output \
 	tf-fmt tf-validate tf-lint kubeconfig lint test \
 	k8s-secret k8s-apply k8s-status k8s-forward k8s-logs k8s-rollout \
-	ingress-install ingress-ip smoke
+	ingress-install ingress-ip smoke logging-install logs-cloud monitoring-install
 
 # Доступы к бакету с состоянием и параметры облака подставляются в окружение
 # каждой команды Terraform: в репозитории их нет, а IAM-токен живёт 12 часов и
@@ -67,6 +67,7 @@ kubeconfig:
 # --- Приложение --------------------------------------------------------------
 
 # Секрет собирается из выводов Terraform и в репозиторий не попадает.
+# После шага 70 его наполняет External Secrets Operator из Lockbox.
 k8s-secret:
 	kubectl apply -f k8s/manifests/00-namespace.yaml
 	$(tf_env) && kubectl -n $(NAMESPACE) create secret generic bulletin-secret \
@@ -107,6 +108,37 @@ ingress-install:
 
 ingress-ip:
 	@$(tf_env) && terraform -chdir=$(TF_DIR) output -raw ingress_ip && echo
+
+# --- Наблюдаемость -----------------------------------------------------------
+
+# Идентификатор лог-группы приезжает из Terraform отдельным ConfigMap, чтобы
+# сам манифест DaemonSet не зависел от конкретного окружения.
+logging-install:
+	kubectl apply -f k8s/logging/fluent-bit.yaml
+	$(tf_env) && kubectl -n logging create configmap fluent-bit-target \
+		--from-literal=log_group_id="$$(terraform -chdir=$(TF_DIR) output -raw log_group_id)" \
+		--dry-run=client -o yaml | kubectl apply -f -
+	kubectl -n logging rollout restart daemonset/fluent-bit
+	kubectl -n logging rollout status daemonset/fluent-bit --timeout=5m
+
+# Sidecar с метриками появляется в подах приложения после этой команды.
+# Каталог подставляется в конфиг здесь: переменные окружения Unified Agent
+# внутри конфига не раскрывает.
+monitoring-install:
+	$(tf_env) && sed "s|__FOLDER_ID__|$$(terraform -chdir=$(TF_DIR) output -raw folder_id)|" \
+		k8s/monitoring/unified-agent.yml > /tmp/unified-agent.yml
+	kubectl -n $(NAMESPACE) create configmap unified-agent-config \
+		--from-file=config.yml=/tmp/unified-agent.yml \
+		--dry-run=client -o yaml | kubectl apply -f -
+	rm -f /tmp/unified-agent.yml
+	kubectl apply -f k8s/manifests/30-deployment.yaml
+	kubectl -n $(NAMESPACE) rollout restart deployment/bulletin-board
+	kubectl -n $(NAMESPACE) rollout status deployment/bulletin-board --timeout=10m
+
+# Последние записи приложения из Cloud Logging.
+logs-cloud:
+	@$(tf_env) && yc logging read \
+		--group-id "$$(terraform -chdir=$(TF_DIR) output -raw log_group_id)" --limit 20
 
 # Быстрая проверка живости через публичный адрес.
 smoke:

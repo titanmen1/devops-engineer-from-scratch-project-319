@@ -1,0 +1,53 @@
+# Конфигурация Unified Agent — он ездит sidecar-контейнером в поде приложения,
+# забирает метрики Spring Actuator в формате Prometheus и пишет их в Yandex
+# Monitoring. Авторизация идёт через метаданные узла: сервисный аккаунт узлов
+# имеет роль monitoring.editor, поэтому ключей в кластере нет.
+#
+# Sidecar, а не отдельный Deployment: агент должен опрашивать конкретный под,
+# иначе счётчики разных реплик перемешиваются через балансировку сервиса.
+#
+# __FOLDER_ID__ подставляется при создании ConfigMap (`make monitoring-install`):
+# переменные окружения агент в конфиге не раскрывает — уходит литерал.
+status:
+  port: 16241
+
+storages:
+  - name: main
+    plugin: fs
+    config:
+      directory: /var/lib/yandex/unified_agent/main
+      max_partition_size: 10mb
+      max_segment_size: 1mb
+
+channels:
+  - name: cloud_monitoring
+    channel:
+      pipe:
+        - storage_ref:
+            name: main
+      output:
+        plugin: yc_metrics
+        config:
+          folder_id: "__FOLDER_ID__"
+          iam:
+            cloud_meta: {}
+
+# Метки pod и node приходят из самих метрик: приложение добавляет их через
+# management.metrics.tags (см. переменные MANAGEMENT_METRICS_TAGS_* в
+# Deployment). Агенту разделять серии не нужно.
+routes:
+  - input:
+      plugin: metrics_pull
+      config:
+        url: http://localhost:9090/actuator/prometheus
+        format:
+          prometheus: {}
+        namespace: bulletins
+        poll_period: 30s
+        # В Monitoring имя метрики живёт в метке name, а Micrometer использует
+        # эту же метку в своих данных (executor_active_threads{name=...}).
+        # Переносим имя метрики в метку sensor, иначе весь батч отклоняется.
+        metric_name_label: sensor
+    channel:
+      channel_ref:
+        name: cloud_monitoring

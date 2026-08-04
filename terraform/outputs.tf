@@ -103,3 +103,13 @@ output "lockbox_secret_id" {
   description = "Идентификатор Lockbox-секрета с доступами приложения"
   value       = yandex_lockbox_secret.app.id
 }
+
+output "log_group_id" {
+  description = "Идентификатор лог-группы Cloud Logging"
+  value       = yandex_logging_group.app.id
+}
+
+output "folder_id" {
+  description = "Каталог, в котором развёрнута инфраструктура"
+  value       = var.folder_id
+}
