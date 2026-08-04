@@ -1,5 +1,3 @@
-# --- Доступ к облаку ---------------------------------------------------------
-
 variable "cloud_id" {
   description = "Идентификатор облака Yandex Cloud"
   type        = string
@@ -35,8 +33,6 @@ variable "project_name" {
   default     = "bulletins-319"
 }
 
-# --- Сеть --------------------------------------------------------------------
-
 variable "subnet_cidr" {
   description = "CIDR подсети, в которой живут узлы кластера и хост базы"
   type        = string
@@ -54,8 +50,6 @@ variable "service_ipv4_range" {
   type        = string
   default     = "10.96.0.0/16"
 }
-
-# --- Kubernetes --------------------------------------------------------------
 
 variable "k8s_version" {
   description = "Версия Kubernetes для мастера и группы узлов"
@@ -111,8 +105,6 @@ variable "node_preemptible" {
   default     = false
 }
 
-# --- База данных -------------------------------------------------------------
-
 variable "db_version" {
   description = "Версия PostgreSQL"
   type        = string
@@ -149,15 +141,11 @@ variable "db_user" {
   default     = "bulletins"
 }
 
-# --- Наблюдаемость -----------------------------------------------------------
-
 variable "logs_retention_period" {
   description = "Срок хранения логов приложения в Cloud Logging"
   type        = string
   default     = "168h"
 }
-
-# --- Object Storage ----------------------------------------------------------
 
 variable "bucket_name" {
   description = "Имя бакета для картинок объявлений (уникально в пределах Object Storage)"

@@ -3,8 +3,6 @@ resource "yandex_vpc_network" "main" {
   description = "Сеть кластера, базы данных и балансировщика"
 }
 
-# Узлы кластера сидят за NAT: свой публичный адрес им не нужен, а тянуть образы
-# и ходить в API облака они должны.
 resource "yandex_vpc_gateway" "nat" {
   name = "${var.project_name}-nat"
 
@@ -29,8 +27,6 @@ resource "yandex_vpc_subnet" "main" {
   route_table_id = yandex_vpc_route_table.main.id
 }
 
-# Адрес резервируем заранее и отдаём ingress-контроллеру через
-# loadBalancerIP, чтобы он переживал пересоздание сервиса.
 resource "yandex_vpc_address" "ingress" {
   name = "${var.project_name}-ingress-ip"
 
@@ -39,8 +35,6 @@ resource "yandex_vpc_address" "ingress" {
   }
 }
 
-# Одна группа на мастер и узлы: правила ниже повторяют пример из документации
-# Managed Service for Kubernetes.
 resource "yandex_vpc_security_group" "k8s" {
   name        = "${var.project_name}-k8s-sg"
   description = "Правила для мастера и узлов кластера"
@@ -107,7 +101,6 @@ resource "yandex_vpc_security_group" "k8s" {
   }
 }
 
-# База принимает подключения только из кластера и только в пулер соединений.
 resource "yandex_vpc_security_group" "db" {
   name        = "${var.project_name}-db-sg"
   description = "Доступ к PostgreSQL из кластера"

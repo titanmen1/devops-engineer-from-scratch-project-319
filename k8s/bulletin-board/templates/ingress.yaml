@@ -10,8 +10,6 @@ metadata:
 spec:
   ingressClassName: {{ .Values.ingress.className }}
   rules:
-    # Без host правило принимает запросы с любым заголовком Host — приложение
-    # доступно и по адресу балансировщика, и по доменному имени.
     - {{ if .Values.ingress.host }}host: {{ .Values.ingress.host | quote }}
       {{ end }}http:
         paths:

@@ -22,8 +22,6 @@ spec:
           type: Utilization
           averageUtilization: {{ .Values.hpa.cpuUtilization }}
   behavior:
-    # Вниз масштабируем медленно: всплеск нагрузки не должен приводить к
-    # немедленному сжатию сразу после спада.
     scaleDown:
       stabilizationWindowSeconds: 300
 {{- end }}

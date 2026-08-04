@@ -1,6 +1,3 @@
-# Пароль генерируем здесь и кладём в Lockbox: в репозиторий он не попадает,
-# а в состоянии Terraform лежит в бакете, а не в git.
-# Спецсимволы ограничены безопасным набором, чтобы пароль не ломал JDBC-URL.
 resource "random_password" "db" {
   length           = 32
   special          = true
@@ -26,9 +23,8 @@ resource "yandex_mdb_postgresql_cluster" "main" {
   }
 
   host {
-    zone      = var.zone
-    subnet_id = yandex_vpc_subnet.main.id
-    # Хост доступен только из своей сети — снаружи в базу ходить незачем.
+    zone             = var.zone
+    subnet_id        = yandex_vpc_subnet.main.id
     assign_public_ip = false
   }
 }

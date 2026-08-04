@@ -8,8 +8,6 @@ metadata:
     {{- include "bulletin-board.labels" . | nindent 4 }}
 spec:
   replicas: {{ .Values.replicaCount }}
-  # maxUnavailable: 0 — во время выката всегда остаётся полный набор рабочих
-  # подов, новый поднимается сверх него.
   strategy:
     type: RollingUpdate
     rollingUpdate:
@@ -23,13 +21,8 @@ spec:
       labels:
         {{- include "bulletin-board.selectorLabels" . | nindent 8 }}
       annotations:
-        # Пересоздаём поды, когда меняется конфигурация: иначе приложение
-        # продолжит работать со старыми значениями.
         checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
     spec:
-      # Разносим реплики по разным узлам. matchLabelKeys считает перекос только
-      # среди подов текущей ревизии — без этого во время выката в расчёт
-      # попадают ещё живые старые поды, и обе новые реплики уезжают на один узел.
       topologySpreadConstraints:
         - maxSkew: 1
           topologyKey: kubernetes.io/hostname
@@ -54,8 +47,6 @@ spec:
                 name: {{ include "bulletin-board.name" . }}-config
             - secretRef:
                 name: {{ .Values.secret.existingSecret }}
-          # Micrometer вешает эти значения метками на все метрики приложения,
-          # поэтому серии разных реплик не сливаются в Monitoring.
           env:
             - name: MANAGEMENT_METRICS_TAGS_POD
               valueFrom:
@@ -65,16 +56,12 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: spec.nodeName
-          # Под исчезает из endpoints не мгновенно: пауза даёт правилам
-          # обновиться, без неё часть запросов при выкате рвётся.
           lifecycle:
             preStop:
               exec:
                 command: ["sh", "-c", "sleep {{ .Values.preStopSleepSeconds }}"]
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
-          # Spring Boot поднимается около 30 секунд: пока идёт старт, за подом
-          # следит startupProbe, и liveness не успевает его убить.
           startupProbe:
             httpGet:
               path: {{ .Values.probes.readinessPath }}
@@ -96,8 +83,6 @@ spec:
             timeoutSeconds: 3
             failureThreshold: 3
         {{- if .Values.metricsAgent.enabled }}
-        # Забирает метрики Actuator этого пода и отправляет их в Yandex
-        # Monitoring. Авторизуется через метаданные узла — ключей нет.
         - name: unified-agent
           image: {{ .Values.metricsAgent.image }}
           resources:

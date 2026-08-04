@@ -1,5 +1,3 @@
-# --- Кластер -----------------------------------------------------------------
-
 output "k8s_cluster_id" {
   description = "Идентификатор кластера Managed Kubernetes"
   value       = yandex_kubernetes_cluster.main.id
@@ -24,8 +22,6 @@ output "get_kubeconfig" {
   description = "Команда для получения kubeconfig"
   value       = "yc managed-kubernetes cluster get-credentials --id ${yandex_kubernetes_cluster.main.id} --external --force"
 }
-
-# --- База данных -------------------------------------------------------------
 
 output "db_host" {
   description = "FQDN хоста PostgreSQL"
@@ -58,8 +54,6 @@ output "db_url" {
   value       = local.db_url
 }
 
-# --- Object Storage ----------------------------------------------------------
-
 output "storage_bucket" {
   description = "Имя бакета с картинками объявлений"
   value       = yandex_storage_bucket.media.bucket
@@ -81,8 +75,6 @@ output "storage_secret_key" {
   value       = yandex_iam_service_account_static_access_key.storage.secret_key
   sensitive   = true
 }
-
-# --- Сеть и секреты ----------------------------------------------------------
 
 output "network_id" {
   description = "Идентификатор сети"

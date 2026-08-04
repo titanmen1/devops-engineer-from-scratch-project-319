@@ -1,5 +1,3 @@
-# Аккаунт самого кластера: заводит балансировщики и публичные адреса для
-# сервисов типа LoadBalancer.
 resource "yandex_iam_service_account" "k8s" {
   name        = "${var.project_name}-k8s-sa"
   description = "Сервисный аккаунт кластера Kubernetes"
@@ -23,7 +21,6 @@ resource "yandex_resourcemanager_folder_iam_member" "k8s_public_admin" {
   member    = "serviceAccount:${yandex_iam_service_account.k8s.id}"
 }
 
-# Аккаунт узлов: тянет образы и отправляет метрики с логами в облако.
 resource "yandex_iam_service_account" "nodes" {
   name        = "${var.project_name}-nodes-sa"
   description = "Сервисный аккаунт узлов кластера"
@@ -65,7 +62,6 @@ resource "yandex_kubernetes_cluster" "main" {
       subnet_id = yandex_vpc_subnet.main.id
     }
 
-    # Публичный адрес мастера нужен, чтобы kubectl работал с ноутбука и из CI.
     public_ip          = true
     security_group_ids = [yandex_vpc_security_group.k8s.id]
 
@@ -112,9 +108,7 @@ resource "yandex_kubernetes_node_group" "main" {
     platform_id = "standard-v3"
 
     network_interface {
-      subnet_ids = [yandex_vpc_subnet.main.id]
-      # Выход в интернет узлы получают через NAT-шлюз, поэтому публичные
-      # адреса им не выдаём.
+      subnet_ids         = [yandex_vpc_subnet.main.id]
       nat                = false
       security_group_ids = [yandex_vpc_security_group.k8s.id]
     }
@@ -139,7 +133,6 @@ resource "yandex_kubernetes_node_group" "main" {
     }
   }
 
-  # Обновляем узлы по одному, чтобы приложение оставалось доступным.
   deploy_policy {
     max_expansion   = 1
     max_unavailable = 0

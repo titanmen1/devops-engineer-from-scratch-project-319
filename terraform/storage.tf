@@ -14,8 +14,6 @@ resource "yandex_iam_service_account_static_access_key" "storage" {
   description        = "Статический ключ доступа к Object Storage"
 }
 
-# Бакет закрытый: приложение отдаёт картинки по presigned-ссылкам, публичное
-# чтение для этого не требуется.
 resource "yandex_storage_bucket" "media" {
   bucket = var.bucket_name
 

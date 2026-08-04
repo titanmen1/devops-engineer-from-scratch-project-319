@@ -1,6 +1,4 @@
 ---
-# Локальный прогон того же образа, который едет в кластер: приложение,
-# PostgreSQL вместо Managed PostgreSQL и MinIO вместо Object Storage.
 services:
   app:
     image: ${APP_IMAGE:-ghcr.io/titanmen1/project-devops-deploy:latest}
@@ -43,8 +41,6 @@ services:
     environment:
       MINIO_ROOT_USER: minioadmin
       MINIO_ROOT_PASSWORD: minioadmin
-      # Без MINIO_DOMAIN сервер считает первый сегмент пути именем бакета и
-      # запрос в virtual-hosted-style уходит не в тот бакет.
       MINIO_DOMAIN: storage
     volumes:
       - storage_data:/data
@@ -53,8 +49,6 @@ services:
       - "9001:9001"
     networks:
       default:
-        # Приложение ходит в S3 в virtual-hosted-style (<bucket>.<host>), как
-        # это принято у Object Storage. Алиас даёт MinIO такое же имя локально.
         aliases:
           - bulletins-media.storage
     healthcheck:
@@ -63,7 +57,6 @@ services:
       timeout: 5s
       retries: 10
 
-  # Приложение не создаёт бакет само, поэтому заводим его до старта.
   storage-init:
     image: minio/mc:RELEASE.2024-05-09T17-04-24Z
     depends_on:

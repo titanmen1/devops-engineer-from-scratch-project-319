@@ -1,6 +1,3 @@
-# Логи подов складывает сюда fluent-bit, который работает на узлах кластера.
-# Права на запись у сервисного аккаунта узлов (роль logging.writer выдана
-# в kubernetes.tf).
 resource "yandex_logging_group" "app" {
   name             = "${var.project_name}-logs"
   description      = "Логи подов приложения «доска объявлений»"
@@ -8,15 +5,10 @@ resource "yandex_logging_group" "app" {
   retention_period = var.logs_retention_period
 }
 
-# Запросы на языке Yandex Monitoring. Метрики приложения приезжают из sidecar
-# Unified Agent с префиксом bulletins. и сервисом custom; метрики кластера
-# собирает сам Managed Kubernetes в сервисе managed-kubernetes.
 locals {
   app_selector = "service=\"custom\", application=\"bulletins\""
   k8s_selector = "service=\"managed-kubernetes\", namespace=\"bulletins\""
 
-  # Unified Agent отдаёт счётчики Prometheus уже дельтами за интервал сбора,
-  # поэтому rate() поверх них не нужен — с ним графики остаются пустыми.
   requests = "\"bulletins.http_server_requests_seconds_count\"{${local.app_selector}}"
 
   dashboard_queries = {

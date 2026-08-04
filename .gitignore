@@ -1,4 +1,3 @@
-# Terraform
 .terraform/
 .terraform-validate/
 *.tfstate
@@ -9,19 +8,15 @@ terraform/.backend-credentials
 crash.log
 crash.*.log
 
-# Values с реальными доступами (если понадобится путь без Lockbox)
 k8s/*/values.prod.yaml
 k8s/*/values.local.yaml
 
-# Ключи сервисных аккаунтов и kubeconfig
 *.pem
 sa-key*.json
 kubeconfig*
 
-# IDE и системные файлы
 .idea/
 .vscode/
 .DS_Store
 
-# Артефакты браузерной автоматизации
 .playwright-mcp/

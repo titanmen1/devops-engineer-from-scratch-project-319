@@ -1,10 +1,4 @@
 ---
-# Сбор логов подов приложения в Yandex Cloud Logging. Авторизация идёт через
-# сервисный аккаунт узла (роль logging.writer выдана в terraform/kubernetes.tf),
-# поэтому ключей в кластере нет.
-#
-# Идентификатор лог-группы подставляется при установке:
-#   make logging-install
 apiVersion: v1
 kind: Namespace
 metadata:
@@ -16,8 +10,6 @@ metadata:
   name: fluent-bit
   namespace: logging
 ---
-# Фильтр kubernetes дополняет записи именем пода, namespace и метками —
-# для этого ему нужен доступ к API на чтение.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
@@ -53,8 +45,6 @@ data:
         Log_Level    info
         Parsers_File parsers.conf
 
-    # Фильтр по имени файла: собираем только логи namespace bulletins,
-    # системные компоненты в лог-группу не попадают.
     [INPUT]
         Name              tail
         Tag               kube.*
@@ -65,9 +55,6 @@ data:
         Skip_Long_Lines   On
         Refresh_Interval  10
 
-    # Приложение пишет структурированный JSON, поэтому Merge_Log раскладывает
-    # его поля в корень записи: оттуда yc-logging забирает message и level.
-    # Merge_Log_Key указывать нельзя — вложенные поля плагин не читает.
     [FILTER]
         Name                kubernetes
         Match               kube.*
@@ -110,7 +97,6 @@ spec:
         app: fluent-bit
     spec:
       serviceAccountName: fluent-bit
-      # Агент должен работать на каждом узле, включая узлы с taint'ами.
       tolerations:
         - operator: Exists
       containers:

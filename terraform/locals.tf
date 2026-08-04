@@ -1,7 +1,4 @@
 locals {
-  # 6432 — пулер соединений Managed PostgreSQL. sslmode=require включает
-  # шифрование без проверки сертификата: корневой сертификат Яндекса на узлы
-  # кластера не раскладывается.
   db_url = format(
     "jdbc:postgresql://%s:6432/%s?sslmode=require",
     yandex_mdb_postgresql_cluster.main.host[0].fqdn,
@@ -11,8 +8,6 @@ locals {
   s3_endpoint = "https://storage.yandexcloud.net"
   s3_region   = "ru-central1"
 
-  # External Secrets Operator ждёт авторизованный ключ в том же виде, в каком
-  # его отдаёт `yc iam key create`.
   eso_authorized_key = jsonencode({
     id                 = yandex_iam_service_account_key.eso.id
     service_account_id = yandex_iam_service_account.eso.service_account_id

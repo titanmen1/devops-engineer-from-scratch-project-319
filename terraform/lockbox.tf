@@ -1,14 +1,9 @@
-# Один секрет на всё приложение: адрес базы, доступы к ней и ключи Object
-# Storage. Кластер читает его через External Secrets Operator (шаг 70), в git
-# ничего из этого не попадает.
 resource "yandex_lockbox_secret" "app" {
   name        = "${var.project_name}-app-secrets"
   description = "Доступы приложения к PostgreSQL и Object Storage"
   folder_id   = var.folder_id
 }
 
-# Аккаунт для External Secrets Operator: только чтение содержимого секретов,
-# ничего больше.
 resource "yandex_iam_service_account" "eso" {
   name        = "${var.project_name}-eso-sa"
   description = "Чтение Lockbox из кластера через External Secrets Operator"
@@ -20,9 +15,6 @@ resource "yandex_lockbox_secret_iam_member" "eso_payload_viewer" {
   member    = "serviceAccount:${yandex_iam_service_account.eso.id}"
 }
 
-# Авторизованный ключ оператор предъявляет Lockbox. Приватная часть лежит в
-# состоянии Terraform (то есть в бакете), в кластер попадает через
-# `make secrets-install`, в репозиторий — никогда.
 resource "yandex_iam_service_account_key" "eso" {
   service_account_id = yandex_iam_service_account.eso.id
   description        = "Ключ для External Secrets Operator"

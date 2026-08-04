@@ -12,9 +12,6 @@ APP_SECRET := bulletin-secret
 	secrets-install secrets-status \
 	ingress-install ingress-ip smoke logging-install logs-cloud monitoring-install
 
-# Доступы к бакету с состоянием и параметры облака подставляются в окружение
-# каждой команды Terraform: в репозитории их нет, а IAM-токен живёт 12 часов и
-# запрашивается заново на каждый запуск.
 define tf_env
 . ./$(BACKEND_CREDENTIALS) && \
 export TF_VAR_cloud_id="$$(yc config get cloud-id)" && \
@@ -22,9 +19,6 @@ export TF_VAR_folder_id="$$(yc config get folder-id)" && \
 export TF_VAR_yc_token="$$(yc iam create-token)"
 endef
 
-# --- Terraform ---------------------------------------------------------------
-
-# Разовая подготовка: сервисный аккаунт, ключ доступа и бакет для состояния.
 tf-bootstrap:
 	./bin/tf-bootstrap.sh
 
@@ -43,13 +37,9 @@ tf-destroy:
 tf-output:
 	$(tf_env) && terraform -chdir=$(TF_DIR) output
 
-# --- Проверки ----------------------------------------------------------------
-
 tf-fmt:
 	terraform fmt -recursive $(TF_DIR)
 
-# Валидация идёт в отдельном TF_DATA_DIR: иначе init -backend=false подхватит
-# закешированную конфигурацию бэкенда и потребует ключи доступа к бакету.
 tf-validate:
 	TF_DATA_DIR=.terraform-validate terraform -chdir=$(TF_DIR) init -backend=false -input=false
 	TF_DATA_DIR=.terraform-validate terraform -chdir=$(TF_DIR) validate
@@ -62,17 +52,10 @@ lint: tf-lint helm-lint
 
 test: tf-validate
 
-# --- Кластер -----------------------------------------------------------------
-
-# Записывает kubeconfig текущего кластера в ~/.kube/config.
 kubeconfig:
 	$(tf_env) && yc managed-kubernetes cluster get-credentials \
 		--id "$$(terraform -chdir=$(TF_DIR) output -raw k8s_cluster_id)" --external --force
 
-# --- Приложение --------------------------------------------------------------
-
-# Секрет собирается из выводов Terraform и в репозиторий не попадает.
-# После шага 70 его наполняет External Secrets Operator из Lockbox.
 k8s-secret:
 	kubectl create namespace $(NAMESPACE) --dry-run=client -o yaml | kubectl apply -f -
 	$(tf_env) && kubectl -n $(NAMESPACE) create secret generic bulletin-secret \
@@ -83,29 +66,24 @@ k8s-secret:
 		--from-literal=STORAGE_S3_SECRETKEY="$$(terraform -chdir=$(TF_DIR) output -raw storage_secret_key)" \
 		--dry-run=client -o yaml | kubectl apply -f -
 
-# Выкат чарта. При неудаче Helm сам возвращает предыдущую ревизию.
 deploy:
 	$(tf_env) && helm upgrade --install $(RELEASE) $(CHART) \
 		--namespace $(NAMESPACE) --create-namespace \
 		--set externalSecrets.lockboxSecretId="$$(terraform -chdir=$(TF_DIR) output -raw lockbox_secret_id)" \
 		--rollback-on-failure --timeout 10m
 
-# Второе окружение: одна реплика, без ingress, HPA и sidecar с метриками.
 deploy-dev:
 	helm upgrade --install $(RELEASE)-dev $(CHART) \
 		--namespace $(NAMESPACE)-dev --create-namespace \
 		-f $(CHART)/values-dev.yaml \
 		--rollback-on-failure --timeout 10m
 
-# Откат на предыдущую ревизию релиза.
 rollback:
 	helm -n $(NAMESPACE) rollback $(RELEASE)
 
 helm-history:
 	helm -n $(NAMESPACE) history $(RELEASE)
 
-# Идентификатор секрета Lockbox обязателен в шаблоне, поэтому для проверки
-# подставляем заглушку — в кластер этот рендер не уезжает.
 helm-lint:
 	helm lint $(CHART) --set externalSecrets.lockboxSecretId=lint
 	helm template $(RELEASE) $(CHART) --set externalSecrets.lockboxSecretId=lint >/dev/null
@@ -123,14 +101,9 @@ k8s-rollout:
 k8s-logs:
 	kubectl -n $(NAMESPACE) logs -l app=$(RELEASE) --tail 100 -f
 
-# Проверка приложения без внешнего доступа.
 k8s-forward:
 	kubectl -n $(NAMESPACE) port-forward svc/$(RELEASE) 8080:80
 
-# --- Секреты -----------------------------------------------------------------
-
-# External Secrets Operator и ключ сервисного аккаунта для чтения Lockbox.
-# После этого секрет приложения наполняется из Lockbox автоматически.
 secrets-install:
 	helm repo add external-secrets https://charts.external-secrets.io
 	helm repo update external-secrets
@@ -141,14 +114,10 @@ secrets-install:
 		--from-literal=key.json="$$(terraform -chdir=$(TF_DIR) output -raw eso_authorized_key)" \
 		--dry-run=client -o yaml | kubectl apply -f -
 
-# Что оператор думает о секрете приложения.
 secrets-status:
 	kubectl -n $(NAMESPACE) get secretstore,externalsecret
 	kubectl -n $(NAMESPACE) get secret $(APP_SECRET) -o jsonpath='{.metadata.annotations}' 2>/dev/null || true
 
-# --- Внешний доступ ----------------------------------------------------------
-
-# Контроллер занимает зарезервированный в Terraform публичный адрес.
 ingress-install:
 	helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx
 	helm repo update ingress-nginx
@@ -161,10 +130,6 @@ ingress-install:
 ingress-ip:
 	@$(tf_env) && terraform -chdir=$(TF_DIR) output -raw ingress_ip && echo
 
-# --- Наблюдаемость -----------------------------------------------------------
-
-# Идентификатор лог-группы приезжает из Terraform отдельным ConfigMap, чтобы
-# сам манифест DaemonSet не зависел от конкретного окружения.
 logging-install:
 	kubectl apply -f k8s/logging/fluent-bit.yaml
 	$(tf_env) && kubectl -n logging create configmap fluent-bit-target \
@@ -173,9 +138,6 @@ logging-install:
 	kubectl -n logging rollout restart daemonset/fluent-bit
 	kubectl -n logging rollout status daemonset/fluent-bit --timeout=5m
 
-# Sidecar с метриками появляется в подах приложения после этой команды.
-# Каталог подставляется в конфиг здесь: переменные окружения Unified Agent
-# внутри конфига не раскрывает.
 monitoring-install:
 	$(tf_env) && sed "s|__FOLDER_ID__|$$(terraform -chdir=$(TF_DIR) output -raw folder_id)|" \
 		k8s/monitoring/unified-agent.yml > /tmp/unified-agent.yml
@@ -186,12 +148,10 @@ monitoring-install:
 	kubectl -n $(NAMESPACE) rollout restart deployment/$(RELEASE)
 	kubectl -n $(NAMESPACE) rollout status deployment/$(RELEASE) --timeout=10m
 
-# Последние записи приложения из Cloud Logging.
 logs-cloud:
 	@$(tf_env) && yc logging read \
 		--group-id "$$(terraform -chdir=$(TF_DIR) output -raw log_group_id)" --limit 20
 
-# Быстрая проверка живости через публичный адрес.
 smoke:
 	@$(tf_env) && ip="$$(terraform -chdir=$(TF_DIR) output -raw ingress_ip)" && \
 		curl -sS -o /dev/null -w 'GET / -> %{http_code}\n' "http://$$ip/" && \

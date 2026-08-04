@@ -1,7 +1,5 @@
 {{- if .Values.pdb.enabled }}
 ---
-# Во время слива узла (обновление группы узлов, drain) хотя бы одна реплика
-# приложения обязана остаться живой.
 apiVersion: policy/v1
 kind: PodDisruptionBudget
 metadata:

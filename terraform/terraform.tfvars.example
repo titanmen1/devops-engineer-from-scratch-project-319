@@ -2,13 +2,8 @@ cloud_id  = "b1gxxxxxxxxxxxxxxxxx"
 folder_id = "b1gxxxxxxxxxxxxxxxxx"
 zone      = "ru-central1-d"
 
-# Аутентификация: либо IAM-токен, либо файл с авторизованным ключом
-# сервисного аккаунта. Достаточно одного из двух.
-# yc_token = "t1.xxxxxxxxxxxxxxxx"
 service_account_key_file = "~/.yc-keys/terraform-sa.json"
 
-# Имя бакета уникально в пределах всего Object Storage.
 bucket_name = "bulletins-319-media"
 
-# Прерываемые узлы дешевле, но останавливаются минимум раз в сутки.
 node_preemptible = false

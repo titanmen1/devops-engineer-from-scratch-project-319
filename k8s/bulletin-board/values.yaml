@@ -1,10 +1,6 @@
 ---
-# Значения по умолчанию. Всё, что зависит от окружения, переопределяется в
-# values-prod.yaml или ключами --set при выкате.
 
 namespace: bulletins
-# Namespace заводит `helm --create-namespace`, поэтому в релиз он не входит:
-# иначе `helm uninstall` унёс бы вместе с ним ключ сервисного аккаунта.
 createNamespace: false
 
 replicaCount: 2
@@ -17,15 +13,12 @@ image:
 service:
   type: ClusterIP
   port: 80
-  # Порт приложения и порт Actuator: probes и метрики живут на втором.
   targetPort: 8080
   managementPort: 9090
 
 ingress:
   enabled: true
   className: nginx
-  # Пустой host — правило принимает запросы с любым заголовком Host,
-  # то есть приложение доступно прямо по адресу балансировщика.
   host: ""
   path: /
 
@@ -35,29 +28,18 @@ config:
   STORAGE_S3_BUCKET: bulletins-319-media
   STORAGE_S3_REGION: ru-central1
   JAVA_OPTS: -Xms256m -Xmx640m
-  # В Yandex Monitoring метка name зарезервирована под имя метрики, а эти две
-  # группы используют её в своих данных — из-за них отбраковывается весь батч.
   MANAGEMENT_METRICS_ENABLE_EXECUTOR: "false"
   MANAGEMENT_METRICS_ENABLE_JDBC: "false"
 
-# Имя секрета с доступами к базе и Object Storage. Сам секрет наполняет
-# External Secrets Operator из Lockbox (см. externalSecrets ниже); без него
-# секрет заводится вручную через `make k8s-secret`.
 secret:
   existingSecret: bulletin-secret
-  # Путь без Lockbox: чарт сам создаёт Secret из secret.values. Значения
-  # передаются через --set или файл values вне репозитория.
   create: false
   values: {}
 
 externalSecrets:
   enabled: true
   storeName: yc-lockbox
-  # Секрет с авторизованным ключом сервисного аккаунта, его создаёт
-  # `make secrets-install` из вывода Terraform.
   authorizedKeySecret: yc-sa-key
-  # Идентификатор секрета Lockbox: подставляется при выкате из
-  # `terraform output -raw lockbox_secret_id`.
   lockboxSecretId: ""
   refreshInterval: 1h
 
@@ -73,8 +55,6 @@ probes:
   readinessPath: /actuator/health/readiness
   livenessPath: /actuator/health/liveness
 
-# Пауза перед остановкой: под успевает уйти из endpoints, и запросы при
-# выкате не рвутся.
 preStopSleepSeconds: 10
 terminationGracePeriodSeconds: 45
 
@@ -88,7 +68,6 @@ hpa:
   maxReplicas: 4
   cpuUtilization: 70
 
-# Sidecar с метриками приложения для Yandex Monitoring.
 metricsAgent:
   enabled: true
   image: cr.yandex/yc/unified-agent:latest
