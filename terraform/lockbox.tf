@@ -7,6 +7,28 @@ resource "yandex_lockbox_secret" "app" {
   folder_id   = var.folder_id
 }
 
+# Аккаунт для External Secrets Operator: только чтение содержимого секретов,
+# ничего больше.
+resource "yandex_iam_service_account" "eso" {
+  name        = "${var.project_name}-eso-sa"
+  description = "Чтение Lockbox из кластера через External Secrets Operator"
+}
+
+resource "yandex_lockbox_secret_iam_member" "eso_payload_viewer" {
+  secret_id = yandex_lockbox_secret.app.id
+  role      = "lockbox.payloadViewer"
+  member    = "serviceAccount:${yandex_iam_service_account.eso.id}"
+}
+
+# Авторизованный ключ оператор предъявляет Lockbox. Приватная часть лежит в
+# состоянии Terraform (то есть в бакете), в кластер попадает через
+# `make secrets-install`, в репозиторий — никогда.
+resource "yandex_iam_service_account_key" "eso" {
+  service_account_id = yandex_iam_service_account.eso.id
+  description        = "Ключ для External Secrets Operator"
+  key_algorithm      = "RSA_2048"
+}
+
 resource "yandex_lockbox_secret_version_hashed" "app" {
   secret_id = yandex_lockbox_secret.app.id
 

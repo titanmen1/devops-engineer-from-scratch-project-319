@@ -19,6 +19,11 @@ pdb:
 metricsAgent:
   enabled: false
 
+# В тестовом окружении секрет заводится вручную: отдельный SecretStore ради
+# него разворачивать незачем.
+externalSecrets:
+  enabled: false
+
 resources:
   requests:
     cpu: 100m

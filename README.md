@@ -70,16 +70,17 @@ make kubeconfig     # доступ к кластеру
 ## Выкат приложения
 
 ```bash
-make k8s-secret     # секрет приложения из выводов Terraform
-make deploy         # выкат Helm-чарта
-make k8s-status     # что получилось
+make secrets-install  # External Secrets Operator и ключ для чтения Lockbox
+make deploy           # выкат Helm-чарта
+make k8s-status       # что получилось
 ```
 
 Приложение живёт в namespace `bulletins`. Конфигурация разложена по двум
-объектам: несекретные параметры — в ConfigMap `bulletin-board-config`, доступы к базе
-и Object Storage — в Secret `bulletin-secret`. Секрет собирается из выводов
-Terraform командой `make k8s-secret` и в репозиторий не попадает; образец полей
-лежит в [k8s/secret.example.yaml](k8s/secret.example.yaml).
+объектам: несекретные параметры — в ConfigMap `bulletin-board-config`, доступы к
+базе и Object Storage — в Secret `bulletin-secret`. Секрет наполняет External
+Secrets Operator из Lockbox (см. [Секреты](#секреты)); если оператор не нужен,
+секрет можно завести напрямую из выводов Terraform командой `make k8s-secret`,
+образец полей лежит в [k8s/secret.example.yaml](k8s/secret.example.yaml).
 
 Проверить приложение без внешнего доступа:
 
@@ -214,6 +215,66 @@ helm -n bulletins rollback bulletin-board 3   # на конкретную рев
 Проверено на живом релизе: выкат `--set image.tag=main-36200c4` создал ревизию
 2, `make rollback` вернул образ `:latest` и ревизию 1.
 
+## Секреты
+
+Пароль базы и ключи Object Storage не хранятся ни в репозитории, ни в values
+Helm. Они лежат в Yandex Lockbox (секрет `bulletins-319-app-secrets`, создаётся
+Terraform вместе с базой и бакетом), а в кластер их приносит External Secrets
+Operator.
+
+```text
+Terraform  ──создаёт──▶  Lockbox: SPRING_DATASOURCE_*, STORAGE_S3_*
+                              │
+                     читает   │  сервисный аккаунт bulletins-319-eso-sa
+                              │  (роль lockbox.payloadViewer только на этот секрет)
+                              ▼
+External Secrets Operator ──▶ Secret bulletins/bulletin-secret ──▶ поды приложения
+```
+
+Установка:
+
+```bash
+make secrets-install   # оператор + ключ сервисного аккаунта в кластере
+make deploy            # SecretStore и ExternalSecret из чарта
+make secrets-status    # состояние синхронизации
+```
+
+Ключ сервисного аккаунта Terraform кладёт в вывод `eso_authorized_key`
+(sensitive), а `make secrets-install` переносит его в Secret `yc-sa-key`.
+Приватная часть живёт в состоянии Terraform — то есть в бакете, а не в git.
+
+`ExternalSecret` использует `dataFrom.extract`, поэтому переносит все ключи
+секрета Lockbox как есть: чтобы добавить новый параметр, достаточно положить
+его в Lockbox, чарт править не нужно.
+
+### Ротация
+
+Проверено на живом стенде — смена пароля базы:
+
+```bash
+# 1. новый пароль в базе и в Lockbox
+terraform -chdir=terraform apply -replace=random_password.db
+
+# 2. не ждать час до планового обновления
+kubectl -n bulletins annotate externalsecret bulletin-secret \
+  force-sync=$(date +%s) --overwrite
+
+# 3. приложение читает переменные при старте, поэтому нужен перевыкат
+kubectl -n bulletins rollout restart deployment/bulletin-board
+kubectl -n bulletins rollout status deployment/bulletin-board
+```
+
+Что произошло: Terraform сгенерировал новый пароль, применил его к пользователю
+Managed PostgreSQL и записал новую версию секрета Lockbox. Оператор обновил
+Kubernetes-секрет за секунды (в статусе `ExternalSecret` — `SecretSynced`).
+Перевыкат прошёл штатной стратегией RollingUpdate: 137 запросов подряд во время
+ротации — все `200`, простоя не было.
+
+Третий шаг нужен потому, что переменные окружения из `secretRef` подставляются
+в контейнер один раз при старте: обновление самого секрета в кластере
+происходит автоматически, а вот подхватывает его приложение только при
+перезапуске подов.
+
 ## Наблюдаемость
 
 Метрики и логи уезжают в управляемые сервисы Yandex Cloud — отдельный стенд с
@@ -309,7 +370,7 @@ Terraform-ресурса и публичного API для алертов у Mo
 | `kubernetes.tf` | сервисные аккаунты, кластер, группа узлов |
 | `database.tf` | Managed PostgreSQL, база и пользователь |
 | `storage.tf` | бакет для картинок и ключи доступа к нему |
-| `lockbox.tf` | секрет с доступами приложения |
+| `lockbox.tf` | секрет с доступами приложения и аккаунт для External Secrets |
 | `observability.tf` | лог-группа Cloud Logging и дашборд Monitoring |
 | `outputs.tf` | адреса и идентификаторы для следующих шагов |
 

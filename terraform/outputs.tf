@@ -104,6 +104,12 @@ output "lockbox_secret_id" {
   value       = yandex_lockbox_secret.app.id
 }
 
+output "eso_authorized_key" {
+  description = "Авторизованный ключ сервисного аккаунта для External Secrets Operator"
+  value       = local.eso_authorized_key
+  sensitive   = true
+}
+
 output "log_group_id" {
   description = "Идентификатор лог-группы Cloud Logging"
   value       = yandex_logging_group.app.id

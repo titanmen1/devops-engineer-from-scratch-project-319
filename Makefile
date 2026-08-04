@@ -3,11 +3,13 @@ BACKEND_CREDENTIALS := $(TF_DIR)/.backend-credentials
 NAMESPACE := bulletins
 CHART := k8s/bulletin-board
 RELEASE := bulletin-board
+APP_SECRET := bulletin-secret
 
 .PHONY: tf-bootstrap tf-init tf-plan tf-apply tf-destroy tf-output \
 	tf-fmt tf-validate tf-lint kubeconfig lint test \
 	k8s-secret k8s-status k8s-forward k8s-logs k8s-rollout \
 	deploy deploy-dev rollback helm-history helm-lint uninstall \
+	secrets-install secrets-status \
 	ingress-install ingress-ip smoke logging-install logs-cloud monitoring-install
 
 # Доступы к бакету с состоянием и параметры облака подставляются в окружение
@@ -83,8 +85,9 @@ k8s-secret:
 
 # Выкат чарта. При неудаче Helm сам возвращает предыдущую ревизию.
 deploy:
-	helm upgrade --install $(RELEASE) $(CHART) \
+	$(tf_env) && helm upgrade --install $(RELEASE) $(CHART) \
 		--namespace $(NAMESPACE) --create-namespace \
+		--set externalSecrets.lockboxSecretId="$$(terraform -chdir=$(TF_DIR) output -raw lockbox_secret_id)" \
 		--rollback-on-failure --timeout 10m
 
 # Второе окружение: одна реплика, без ingress, HPA и sidecar с метриками.
@@ -101,9 +104,12 @@ rollback:
 helm-history:
 	helm -n $(NAMESPACE) history $(RELEASE)
 
+# Идентификатор секрета Lockbox обязателен в шаблоне, поэтому для проверки
+# подставляем заглушку — в кластер этот рендер не уезжает.
 helm-lint:
-	helm lint $(CHART)
-	helm template $(RELEASE) $(CHART) >/dev/null
+	helm lint $(CHART) --set externalSecrets.lockboxSecretId=lint
+	helm template $(RELEASE) $(CHART) --set externalSecrets.lockboxSecretId=lint >/dev/null
+	helm template $(RELEASE) $(CHART) -f $(CHART)/values-dev.yaml >/dev/null
 
 uninstall:
 	helm -n $(NAMESPACE) uninstall $(RELEASE)
@@ -120,6 +126,25 @@ k8s-logs:
 # Проверка приложения без внешнего доступа.
 k8s-forward:
 	kubectl -n $(NAMESPACE) port-forward svc/$(RELEASE) 8080:80
+
+# --- Секреты -----------------------------------------------------------------
+
+# External Secrets Operator и ключ сервисного аккаунта для чтения Lockbox.
+# После этого секрет приложения наполняется из Lockbox автоматически.
+secrets-install:
+	helm repo add external-secrets https://charts.external-secrets.io
+	helm repo update external-secrets
+	helm upgrade --install external-secrets external-secrets/external-secrets \
+		--namespace external-secrets --create-namespace --wait --timeout 10m
+	kubectl create namespace $(NAMESPACE) --dry-run=client -o yaml | kubectl apply -f -
+	$(tf_env) && kubectl -n $(NAMESPACE) create secret generic yc-sa-key \
+		--from-literal=key.json="$$(terraform -chdir=$(TF_DIR) output -raw eso_authorized_key)" \
+		--dry-run=client -o yaml | kubectl apply -f -
+
+# Что оператор думает о секрете приложения.
+secrets-status:
+	kubectl -n $(NAMESPACE) get secretstore,externalsecret
+	kubectl -n $(NAMESPACE) get secret $(APP_SECRET) -o jsonpath='{.metadata.annotations}' 2>/dev/null || true
 
 # --- Внешний доступ ----------------------------------------------------------
 

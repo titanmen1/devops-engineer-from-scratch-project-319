@@ -36,10 +36,22 @@ config:
   MANAGEMENT_METRICS_ENABLE_EXECUTOR: "false"
   MANAGEMENT_METRICS_ENABLE_JDBC: "false"
 
-# Доступы к базе и Object Storage чарт не создаёт: секрет заводится отдельно
-# (`make k8s-secret`), а после подключения Lockbox — External Secrets Operator.
+# Имя секрета с доступами к базе и Object Storage. Сам секрет наполняет
+# External Secrets Operator из Lockbox (см. externalSecrets ниже); без него
+# секрет заводится вручную через `make k8s-secret`.
 secret:
   existingSecret: bulletin-secret
+
+externalSecrets:
+  enabled: true
+  storeName: yc-lockbox
+  # Секрет с авторизованным ключом сервисного аккаунта, его создаёт
+  # `make secrets-install` из вывода Terraform.
+  authorizedKeySecret: yc-sa-key
+  # Идентификатор секрета Lockbox: подставляется при выкате из
+  # `terraform output -raw lockbox_secret_id`.
+  lockboxSecretId: ""
+  refreshInterval: 1h
 
 resources:
   requests:
