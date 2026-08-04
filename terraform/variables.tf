@@ -72,7 +72,7 @@ variable "k8s_release_channel" {
 variable "node_count" {
   description = "Количество рабочих узлов"
   type        = number
-  default     = 1
+  default     = 2
 }
 
 variable "node_cores" {

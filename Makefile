@@ -4,7 +4,8 @@ NAMESPACE := bulletins
 
 .PHONY: tf-bootstrap tf-init tf-plan tf-apply tf-destroy tf-output \
 	tf-fmt tf-validate tf-lint kubeconfig lint test \
-	k8s-secret k8s-apply k8s-status k8s-forward k8s-logs k8s-rollout
+	k8s-secret k8s-apply k8s-status k8s-forward k8s-logs k8s-rollout \
+	ingress-install ingress-ip smoke
 
 # Доступы к бакету с состоянием и параметры облака подставляются в окружение
 # каждой команды Terraform: в репозитории их нет, а IAM-токен живёт 12 часов и
@@ -91,3 +92,24 @@ k8s-logs:
 # Проверка приложения без внешнего доступа.
 k8s-forward:
 	kubectl -n $(NAMESPACE) port-forward svc/bulletin-board 8080:80
+
+# --- Внешний доступ ----------------------------------------------------------
+
+# Контроллер занимает зарезервированный в Terraform публичный адрес.
+ingress-install:
+	helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx
+	helm repo update ingress-nginx
+	$(tf_env) && helm upgrade --install ingress-nginx ingress-nginx/ingress-nginx \
+		--namespace ingress-nginx --create-namespace \
+		-f k8s/ingress-nginx-values.yaml \
+		--set controller.service.loadBalancerIP="$$(terraform -chdir=$(TF_DIR) output -raw ingress_ip)" \
+		--wait --timeout 10m
+
+ingress-ip:
+	@$(tf_env) && terraform -chdir=$(TF_DIR) output -raw ingress_ip && echo
+
+# Быстрая проверка живости через публичный адрес.
+smoke:
+	@$(tf_env) && ip="$$(terraform -chdir=$(TF_DIR) output -raw ingress_ip)" && \
+		curl -sS -o /dev/null -w 'GET / -> %{http_code}\n' "http://$$ip/" && \
+		curl -sS -o /dev/null -w 'GET /api/bulletins -> %{http_code}\n' "http://$$ip/api/bulletins"

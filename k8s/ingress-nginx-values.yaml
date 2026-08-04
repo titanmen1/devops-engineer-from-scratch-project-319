@@ -1,0 +1,34 @@
+---
+# Values для чарта ingress-nginx. Контроллер получает публичный адрес через
+# сетевой балансировщик Yandex Cloud: адрес зарезервирован в Terraform
+# (output `ingress_ip`) и подставляется при установке, поэтому переживает
+# пересоздание сервиса. Установка — `make ingress-install`.
+controller:
+  # Две реплики на двух узлах: перезапуск одной не роняет входящий трафик.
+  replicaCount: 2
+
+  service:
+    type: LoadBalancer
+    externalTrafficPolicy: Cluster
+
+  resources:
+    requests:
+      cpu: "100m"
+      memory: "128Mi"
+    limits:
+      cpu: "500m"
+      memory: "256Mi"
+
+  # Метрики контроллера пригодятся на шаге с мониторингом.
+  metrics:
+    enabled: true
+
+  # Разносим реплики контроллера по разным узлам.
+  topologySpreadConstraints:
+    - maxSkew: 1
+      topologyKey: kubernetes.io/hostname
+      whenUnsatisfiable: ScheduleAnyway
+      labelSelector:
+        matchLabels:
+          app.kubernetes.io/name: ingress-nginx
+          app.kubernetes.io/component: controller

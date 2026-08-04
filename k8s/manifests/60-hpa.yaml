@@ -1,0 +1,27 @@
+---
+# Автомасштабирование по загрузке процессора. Нижняя граница совпадает с
+# replicas в Deployment, чтобы HPA не сжимал набор ниже двух реплик.
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: bulletin-board
+  namespace: bulletins
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: bulletin-board
+  minReplicas: 2
+  maxReplicas: 4
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+  behavior:
+    # Вниз масштабируем медленно: всплеск нагрузки не должен приводить к
+    # немедленному сжатию сразу после спада.
+    scaleDown:
+      stabilizationWindowSeconds: 300

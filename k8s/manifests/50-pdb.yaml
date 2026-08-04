@@ -1,0 +1,13 @@
+---
+# Во время слива узла (обновление группы узлов, drain) хотя бы одна реплика
+# приложения обязана остаться живой.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: bulletin-board
+  namespace: bulletins
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: bulletin-board

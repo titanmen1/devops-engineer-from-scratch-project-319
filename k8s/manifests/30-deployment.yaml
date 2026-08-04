@@ -23,6 +23,23 @@ spec:
       labels:
         app: bulletin-board
     spec:
+      # Разносим реплики по разным узлам, чтобы падение узла не уносило
+      # приложение целиком. DoNotSchedule обязателен: с мягким правилом обе
+      # реплики после выката оказываются на одном узле.
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: DoNotSchedule
+          labelSelector:
+            matchLabels:
+              app: bulletin-board
+          # Считаем перекос только среди подов текущей ревизии. Без этого во
+          # время выката в расчёт попадают ещё живые старые поды, и обе новые
+          # реплики законно уезжают на один узел.
+          matchLabelKeys:
+            - pod-template-hash
+      # Времени хватает на preStop и на корректное завершение запросов.
+      terminationGracePeriodSeconds: 45
       containers:
         - name: app
           image: ghcr.io/titanmen1/project-devops-deploy:latest
@@ -37,6 +54,13 @@ spec:
                 name: bulletin-config
             - secretRef:
                 name: bulletin-secret
+          # Под исчезает из endpoints не мгновенно: балансировщик успевает
+          # послать запрос в уже удаляемый под. Пауза перед остановкой даёт
+          # правилам обновиться — без неё часть запросов при выкате рвётся.
+          lifecycle:
+            preStop:
+              exec:
+                command: ["sh", "-c", "sleep 10"]
           resources:
             requests:
               cpu: "200m"
@@ -66,3 +90,4 @@ spec:
             periodSeconds: 20
             timeoutSeconds: 3
             failureThreshold: 3
+

@@ -25,7 +25,9 @@ Yandex Cloud, зона ru-central1-d
 │   └── security group bulletins-319-db-sg — только порт 6432 из кластера
 │
 ├── Managed Kubernetes bulletins-319-k8s (зональный мастер, публичный API)
-│   └── группа узлов bulletins-319-ng — 2 vCPU × 20%, 4 ГБ на узел
+│   └── группа узлов bulletins-319-ng — 2 узла, 2 vCPU × 20%, 4 ГБ
+│       ├── ingress-nginx → публичный адрес 158.160.197.20
+│       └── namespace bulletins: Deployment, Service, Ingress, PDB, HPA
 │
 ├── Managed PostgreSQL bulletins-319-pg (b2.medium, доступен только из кластера)
 ├── Object Storage bulletins-319-media — картинки объявлений
@@ -91,6 +93,64 @@ curl http://localhost:8080/api/bulletins
 стартует (около 30 секунд), под держит startupProbe, поэтому liveness не
 перезапускает его на старте.
 
+## Внешний доступ
+
+Наружу трафик отдаёт ingress-nginx: контроллер получает публичный адрес через
+сетевой балансировщик Yandex Cloud. Адрес зарезервирован в Terraform
+(`yandex_vpc_address`), поэтому переживает пересоздание сервиса.
+
+```bash
+make ingress-install   # контроллер занимает зарезервированный адрес
+make ingress-ip        # какой это адрес
+make smoke             # проверка приложения снаружи
+```
+
+Приложение доступно по адресу **http://158.160.197.20**.
+
+Правило Ingress описано без `host`, поэтому принимает запросы и по адресу, и по
+доменному имени, если его позже привяжут к этому адресу.
+
+## Масштабирование и релизы без простоя
+
+Кластер держит два рабочих узла (`node_count` в *terraform/variables.tf*),
+приложение — две реплики. За безостановочность отвечают четыре вещи:
+
+| Что | Где | Зачем |
+|---|---|---|
+| `maxUnavailable: 0`, `maxSurge: 1` | Deployment | во время выката всегда есть полный набор рабочих подов |
+| `preStop: sleep 10` | Deployment | под успевает уйти из endpoints до остановки |
+| `topologySpreadConstraints` | Deployment | реплики стоят на разных узлах |
+| PodDisruptionBudget | *50-pdb.yaml* | при сливе узла остаётся минимум одна реплика |
+
+`matchLabelKeys: [pod-template-hash]` в правиле разноса считает перекос только
+среди подов текущей ревизии. Без него в расчёт попадают ещё живые поды старой
+ревизии, и обе новые реплики законно уезжают на один узел.
+
+HorizontalPodAutoscaler (*60-hpa.yaml*) держит от 2 до 4 реплик по загрузке
+процессора (порог 70%). Metrics Server в Managed Kubernetes работает из
+коробки, ставить ничего не нужно.
+
+Проверка выката под нагрузкой:
+
+```bash
+# в одном терминале — непрерывные запросы
+while true; do curl -s -o /dev/null -w '%{http_code}\n' http://158.160.197.20/api/bulletins; sleep 0.3; done
+
+# в другом — смена версии образа
+kubectl -n bulletins set image deployment/bulletin-board \
+  app=ghcr.io/titanmen1/project-devops-deploy:main-36200c4
+kubectl -n bulletins rollout status deployment/bulletin-board
+```
+
+На таком прогоне выката (566 запросов за два переключения версии) все ответы
+были `200`, ошибок и обрывов соединения не было.
+
+Откат на предыдущую версию:
+
+```bash
+kubectl -n bulletins rollout undo deployment/bulletin-board
+```
+
 ## Terraform
 
 Конфигурация лежит в *terraform/* и разбита по смыслу:
@@ -147,12 +207,14 @@ make test   # terraform init -backend=false + terraform validate
 
 ```text
 .
-├── bin/tf-bootstrap.sh      # разовая подготовка бакета для состояния
+├── bin/tf-bootstrap.sh          # разовая подготовка бакета для состояния
 ├── k8s/
-│   ├── manifests/           # namespace, ConfigMap, Deployment, Service
-│   └── secret.example.yaml  # образец секрета, реальные значения не в git
-├── terraform/               # инфраструктура Yandex Cloud
-├── docker-compose.yaml      # локальный прогон приложения
-├── Makefile                 # все команды проекта
+│   ├── manifests/               # namespace, ConfigMap, Deployment, Service,
+│   │                            # PDB, HPA, Ingress
+│   ├── ingress-nginx-values.yaml # values для чарта ingress-контроллера
+│   └── secret.example.yaml      # образец секрета, реальные значения не в git
+├── terraform/                   # инфраструктура Yandex Cloud
+├── docker-compose.yaml          # локальный прогон приложения
+├── Makefile                     # все команды проекта
 └── README.md
 ```
