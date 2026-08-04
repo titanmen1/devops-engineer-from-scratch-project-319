@@ -1,0 +1,82 @@
+---
+# Значения по умолчанию. Всё, что зависит от окружения, переопределяется в
+# values-prod.yaml или ключами --set при выкате.
+
+namespace: bulletins
+replicaCount: 2
+
+image:
+  repository: ghcr.io/titanmen1/project-devops-deploy
+  tag: latest
+  pullPolicy: Always
+
+service:
+  type: ClusterIP
+  port: 80
+  # Порт приложения и порт Actuator: probes и метрики живут на втором.
+  targetPort: 8080
+  managementPort: 9090
+
+ingress:
+  enabled: true
+  className: nginx
+  # Пустой host — правило принимает запросы с любым заголовком Host,
+  # то есть приложение доступно прямо по адресу балансировщика.
+  host: ""
+  path: /
+
+config:
+  SPRING_PROFILES_ACTIVE: prod
+  STORAGE_S3_ENDPOINT: https://storage.yandexcloud.net
+  STORAGE_S3_BUCKET: bulletins-319-media
+  STORAGE_S3_REGION: ru-central1
+  JAVA_OPTS: -Xms256m -Xmx640m
+  # В Yandex Monitoring метка name зарезервирована под имя метрики, а эти две
+  # группы используют её в своих данных — из-за них отбраковывается весь батч.
+  MANAGEMENT_METRICS_ENABLE_EXECUTOR: "false"
+  MANAGEMENT_METRICS_ENABLE_JDBC: "false"
+
+# Доступы к базе и Object Storage чарт не создаёт: секрет заводится отдельно
+# (`make k8s-secret`), а после подключения Lockbox — External Secrets Operator.
+secret:
+  existingSecret: bulletin-secret
+
+resources:
+  requests:
+    cpu: 200m
+    memory: 512Mi
+  limits:
+    cpu: "1"
+    memory: 1Gi
+
+probes:
+  readinessPath: /actuator/health/readiness
+  livenessPath: /actuator/health/liveness
+
+# Пауза перед остановкой: под успевает уйти из endpoints, и запросы при
+# выкате не рвутся.
+preStopSleepSeconds: 10
+terminationGracePeriodSeconds: 45
+
+pdb:
+  enabled: true
+  minAvailable: 1
+
+hpa:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 4
+  cpuUtilization: 70
+
+# Sidecar с метриками приложения для Yandex Monitoring.
+metricsAgent:
+  enabled: true
+  image: cr.yandex/yc/unified-agent:latest
+  configMap: unified-agent-config
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 192Mi

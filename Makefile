@@ -1,10 +1,13 @@
 TF_DIR := terraform
 BACKEND_CREDENTIALS := $(TF_DIR)/.backend-credentials
 NAMESPACE := bulletins
+CHART := k8s/bulletin-board
+RELEASE := bulletin-board
 
 .PHONY: tf-bootstrap tf-init tf-plan tf-apply tf-destroy tf-output \
 	tf-fmt tf-validate tf-lint kubeconfig lint test \
-	k8s-secret k8s-apply k8s-status k8s-forward k8s-logs k8s-rollout \
+	k8s-secret k8s-status k8s-forward k8s-logs k8s-rollout \
+	deploy deploy-dev rollback helm-history helm-lint uninstall \
 	ingress-install ingress-ip smoke logging-install logs-cloud monitoring-install
 
 # Доступы к бакету с состоянием и параметры облака подставляются в окружение
@@ -52,7 +55,7 @@ tf-validate:
 tf-lint:
 	tflint --config $(CURDIR)/.tflint.hcl --recursive --chdir=$(TF_DIR)
 
-lint: tf-lint
+lint: tf-lint helm-lint
 	terraform fmt -check -recursive $(TF_DIR)
 
 test: tf-validate
@@ -69,7 +72,7 @@ kubeconfig:
 # Секрет собирается из выводов Terraform и в репозиторий не попадает.
 # После шага 70 его наполняет External Secrets Operator из Lockbox.
 k8s-secret:
-	kubectl apply -f k8s/manifests/00-namespace.yaml
+	kubectl create namespace $(NAMESPACE) --dry-run=client -o yaml | kubectl apply -f -
 	$(tf_env) && kubectl -n $(NAMESPACE) create secret generic bulletin-secret \
 		--from-literal=SPRING_DATASOURCE_URL="$$(terraform -chdir=$(TF_DIR) output -raw db_url)" \
 		--from-literal=SPRING_DATASOURCE_USERNAME="$$(terraform -chdir=$(TF_DIR) output -raw db_user)" \
@@ -78,21 +81,45 @@ k8s-secret:
 		--from-literal=STORAGE_S3_SECRETKEY="$$(terraform -chdir=$(TF_DIR) output -raw storage_secret_key)" \
 		--dry-run=client -o yaml | kubectl apply -f -
 
-k8s-apply:
-	kubectl apply -f k8s/manifests/
+# Выкат чарта. При неудаче Helm сам возвращает предыдущую ревизию.
+deploy:
+	helm upgrade --install $(RELEASE) $(CHART) \
+		--namespace $(NAMESPACE) --create-namespace \
+		--rollback-on-failure --timeout 10m
+
+# Второе окружение: одна реплика, без ingress, HPA и sidecar с метриками.
+deploy-dev:
+	helm upgrade --install $(RELEASE)-dev $(CHART) \
+		--namespace $(NAMESPACE)-dev --create-namespace \
+		-f $(CHART)/values-dev.yaml \
+		--rollback-on-failure --timeout 10m
+
+# Откат на предыдущую ревизию релиза.
+rollback:
+	helm -n $(NAMESPACE) rollback $(RELEASE)
+
+helm-history:
+	helm -n $(NAMESPACE) history $(RELEASE)
+
+helm-lint:
+	helm lint $(CHART)
+	helm template $(RELEASE) $(CHART) >/dev/null
+
+uninstall:
+	helm -n $(NAMESPACE) uninstall $(RELEASE)
 
 k8s-status:
-	kubectl -n $(NAMESPACE) get deploy,pods,svc -o wide
+	kubectl -n $(NAMESPACE) get deploy,pods,svc,ingress,hpa,pdb -o wide
 
 k8s-rollout:
-	kubectl -n $(NAMESPACE) rollout status deployment/bulletin-board
+	kubectl -n $(NAMESPACE) rollout status deployment/$(RELEASE)
 
 k8s-logs:
-	kubectl -n $(NAMESPACE) logs -l app=bulletin-board --tail 100 -f
+	kubectl -n $(NAMESPACE) logs -l app=$(RELEASE) --tail 100 -f
 
 # Проверка приложения без внешнего доступа.
 k8s-forward:
-	kubectl -n $(NAMESPACE) port-forward svc/bulletin-board 8080:80
+	kubectl -n $(NAMESPACE) port-forward svc/$(RELEASE) 8080:80
 
 # --- Внешний доступ ----------------------------------------------------------
 
@@ -131,9 +158,8 @@ monitoring-install:
 		--from-file=config.yml=/tmp/unified-agent.yml \
 		--dry-run=client -o yaml | kubectl apply -f -
 	rm -f /tmp/unified-agent.yml
-	kubectl apply -f k8s/manifests/30-deployment.yaml
-	kubectl -n $(NAMESPACE) rollout restart deployment/bulletin-board
-	kubectl -n $(NAMESPACE) rollout status deployment/bulletin-board --timeout=10m
+	kubectl -n $(NAMESPACE) rollout restart deployment/$(RELEASE)
+	kubectl -n $(NAMESPACE) rollout status deployment/$(RELEASE) --timeout=10m
 
 # Последние записи приложения из Cloud Logging.
 logs-cloud:

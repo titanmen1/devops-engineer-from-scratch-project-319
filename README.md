@@ -42,6 +42,7 @@ Yandex Cloud, зона ru-central1-d
 | [Yandex Cloud CLI](https://yandex.cloud/ru/docs/cli/quickstart#install) | 1.22+ | аутентификация в облаке, kubeconfig, bootstrap состояния |
 | [Terraform](https://developer.hashicorp.com/terraform/install) | 1.6+ | инфраструктура |
 | [kubectl](https://kubernetes.io/docs/tasks/tools/) | 1.32+ | работа с кластером |
+| [Helm](https://helm.sh/docs/intro/install/) | 3.x | выкат приложения и сторонних чартов |
 | Docker | 24+ | локальный прогон приложения |
 | GNU Make | — | все команды репозитория |
 | Python 3 | 3.9+ | разбор JSON в bootstrap-скрипте |
@@ -49,7 +50,7 @@ Yandex Cloud, зона ru-central1-d
 Проверка:
 
 ```bash
-yc version && terraform version && kubectl version --client
+yc version && terraform version && kubectl version --client && helm version --short
 ```
 
 Нужен сервисный аккаунт Yandex Cloud с ролью `admin` в каталоге и настроенный
@@ -70,13 +71,12 @@ make kubeconfig     # доступ к кластеру
 
 ```bash
 make k8s-secret     # секрет приложения из выводов Terraform
-make k8s-apply      # namespace, ConfigMap, Deployment, Service
-make k8s-rollout    # дождаться готовности подов
+make deploy         # выкат Helm-чарта
 make k8s-status     # что получилось
 ```
 
 Приложение живёт в namespace `bulletins`. Конфигурация разложена по двум
-объектам: несекретные параметры — в ConfigMap `bulletin-config`, доступы к базе
+объектам: несекретные параметры — в ConfigMap `bulletin-board-config`, доступы к базе
 и Object Storage — в Secret `bulletin-secret`. Секрет собирается из выводов
 Terraform командой `make k8s-secret` и в репозиторий не попадает; образец полей
 лежит в [k8s/secret.example.yaml](k8s/secret.example.yaml).
@@ -120,13 +120,13 @@ make smoke             # проверка приложения снаружи
 | `maxUnavailable: 0`, `maxSurge: 1` | Deployment | во время выката всегда есть полный набор рабочих подов |
 | `preStop: sleep 10` | Deployment | под успевает уйти из endpoints до остановки |
 | `topologySpreadConstraints` | Deployment | реплики стоят на разных узлах |
-| PodDisruptionBudget | *50-pdb.yaml* | при сливе узла остаётся минимум одна реплика |
+| PodDisruptionBudget | *templates/pdb.yaml* | при сливе узла остаётся минимум одна реплика |
 
 `matchLabelKeys: [pod-template-hash]` в правиле разноса считает перекос только
 среди подов текущей ревизии. Без него в расчёт попадают ещё живые поды старой
 ревизии, и обе новые реплики законно уезжают на один узел.
 
-HorizontalPodAutoscaler (*60-hpa.yaml*) держит от 2 до 4 реплик по загрузке
+HorizontalPodAutoscaler (*templates/hpa.yaml*) держит от 2 до 4 реплик по загрузке
 процессора (порог 70%). Metrics Server в Managed Kubernetes работает из
 коробки, ставить ничего не нужно.
 
@@ -150,6 +150,69 @@ kubectl -n bulletins rollout status deployment/bulletin-board
 ```bash
 kubectl -n bulletins rollout undo deployment/bulletin-board
 ```
+
+## Helm-чарт
+
+Все ресурсы приложения собраны в чарт *k8s/bulletin-board*:
+
+```text
+k8s/bulletin-board/
+├── Chart.yaml
+├── values.yaml           # значения по умолчанию (прод)
+├── values-dev.yaml       # окружение для проверок
+└── templates/
+    ├── _helpers.tpl      # имена и метки
+    ├── configmap.yaml
+    ├── deployment.yaml
+    ├── service.yaml
+    ├── ingress.yaml
+    ├── pdb.yaml
+    └── hpa.yaml
+```
+
+Секрет с доступами чарт не создаёт: он живёт отдельно (`make k8s-secret`,
+а после подключения Lockbox — External Secrets Operator), а Deployment
+подключает его по имени из `secret.existingSecret`. Так пароль базы не
+попадает ни в values, ни в историю релизов Helm.
+
+В шаблон Deployment зашита аннотация `checksum/config` от ConfigMap — при
+изменении конфигурации поды пересоздаются, иначе приложение продолжило бы
+работать со старыми значениями.
+
+### Выкат и окружения
+
+```bash
+make deploy       # прод: 2 реплики, ingress, HPA, sidecar с метриками
+make deploy-dev   # namespace bulletins-dev: 1 реплика, без ingress и HPA
+```
+
+Выкат идёт с `--rollback-on-failure`: если поды не поднялись за таймаут, Helm
+сам возвращает предыдущую ревизию.
+
+Переопределить значения можно тремя способами — по возрастанию приоритета:
+
+```bash
+# 1. файл значений окружения
+helm upgrade --install bulletin-board k8s/bulletin-board -n bulletins \
+  -f k8s/bulletin-board/values-dev.yaml
+
+# 2. отдельные ключи
+helm upgrade --install bulletin-board k8s/bulletin-board -n bulletins \
+  --set replicaCount=3 --set image.tag=main-36200c4
+
+# 3. и то и другое: --set перебивает значения из файлов
+```
+
+### Откаты
+
+```bash
+make helm-history   # список ревизий
+make rollback       # вернуться на предыдущую ревизию
+helm -n bulletins rollback bulletin-board 3   # на конкретную ревизию
+```
+
+Проверено на живом релизе: выкат `--set image.tag=main-36200c4` создал ревизию
+2, `make rollback` вернул образ `:latest` и ревизию 1.
 
 ## Наблюдаемость
 
@@ -280,7 +343,7 @@ docker compose down -v
 ## Проверки
 
 ```bash
-make lint   # terraform fmt -check + tflint
+make lint   # terraform fmt -check, tflint, helm lint + helm template
 make test   # terraform init -backend=false + terraform validate
 ```
 
@@ -291,8 +354,7 @@ make test   # terraform init -backend=false + terraform validate
 ├── assets/                      # скриншоты дашборда и алертов
 ├── bin/tf-bootstrap.sh          # разовая подготовка бакета для состояния
 ├── k8s/
-│   ├── manifests/               # namespace, ConfigMap, Deployment, Service,
-│   │                            # PDB, HPA, Ingress
+│   ├── bulletin-board/          # Helm-чарт приложения
 │   ├── logging/                 # fluent-bit для Cloud Logging
 │   ├── monitoring/              # конфиг Unified Agent для метрик
 │   ├── ingress-nginx-values.yaml # values для чарта ingress-контроллера

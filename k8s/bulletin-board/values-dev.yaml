@@ -1,0 +1,28 @@
+---
+# Окружение для проверок: одна реплика, без автомасштабирования и без
+# внешнего доступа — приложение смотрят через `kubectl port-forward`.
+namespace: bulletins-dev
+
+replicaCount: 1
+
+ingress:
+  enabled: false
+
+hpa:
+  enabled: false
+
+pdb:
+  enabled: false
+
+# Метрики из тестового окружения в Monitoring не шлём, чтобы не путать их
+# с продовыми сериями.
+metricsAgent:
+  enabled: false
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 384Mi
+  limits:
+    cpu: 500m
+    memory: 768Mi

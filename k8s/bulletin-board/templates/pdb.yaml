@@ -1,0 +1,17 @@
+{{- if .Values.pdb.enabled }}
+---
+# Во время слива узла (обновление группы узлов, drain) хотя бы одна реплика
+# приложения обязана остаться живой.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "bulletin-board.name" . }}
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "bulletin-board.labels" . | nindent 4 }}
+spec:
+  minAvailable: {{ .Values.pdb.minAvailable }}
+  selector:
+    matchLabels:
+      {{- include "bulletin-board.selectorLabels" . | nindent 6 }}
+{{- end }}

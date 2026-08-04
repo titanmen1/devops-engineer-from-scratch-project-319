@@ -1,27 +1,29 @@
+{{- if .Values.hpa.enabled }}
 ---
-# Автомасштабирование по загрузке процессора. Нижняя граница совпадает с
-# replicas в Deployment, чтобы HPA не сжимал набор ниже двух реплик.
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:
-  name: bulletin-board
-  namespace: bulletins
+  name: {{ include "bulletin-board.name" . }}
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "bulletin-board.labels" . | nindent 4 }}
 spec:
   scaleTargetRef:
     apiVersion: apps/v1
     kind: Deployment
-    name: bulletin-board
-  minReplicas: 2
-  maxReplicas: 4
+    name: {{ include "bulletin-board.name" . }}
+  minReplicas: {{ .Values.hpa.minReplicas }}
+  maxReplicas: {{ .Values.hpa.maxReplicas }}
   metrics:
     - type: Resource
       resource:
         name: cpu
         target:
           type: Utilization
-          averageUtilization: 70
+          averageUtilization: {{ .Values.hpa.cpuUtilization }}
   behavior:
     # Вниз масштабируем медленно: всплеск нагрузки не должен приводить к
     # немедленному сжатию сразу после спада.
     scaleDown:
       stabilizationWindowSeconds: 300
+{{- end }}

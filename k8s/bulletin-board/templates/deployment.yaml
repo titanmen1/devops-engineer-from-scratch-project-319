@@ -2,12 +2,12 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: bulletin-board
-  namespace: bulletins
+  name: {{ include "bulletin-board.name" . }}
+  namespace: {{ .Values.namespace }}
   labels:
-    app: bulletin-board
+    {{- include "bulletin-board.labels" . | nindent 4 }}
 spec:
-  replicas: 2
+  replicas: {{ .Values.replicaCount }}
   # maxUnavailable: 0 — во время выката всегда остаётся полный набор рабочих
   # подов, новый поднимается сверх него.
   strategy:
@@ -17,43 +17,43 @@ spec:
       maxUnavailable: 0
   selector:
     matchLabels:
-      app: bulletin-board
+      {{- include "bulletin-board.selectorLabels" . | nindent 6 }}
   template:
     metadata:
       labels:
-        app: bulletin-board
+        {{- include "bulletin-board.selectorLabels" . | nindent 8 }}
+      annotations:
+        # Пересоздаём поды, когда меняется конфигурация: иначе приложение
+        # продолжит работать со старыми значениями.
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
     spec:
-      # Разносим реплики по разным узлам, чтобы падение узла не уносило
-      # приложение целиком. DoNotSchedule обязателен: с мягким правилом обе
-      # реплики после выката оказываются на одном узле.
+      # Разносим реплики по разным узлам. matchLabelKeys считает перекос только
+      # среди подов текущей ревизии — без этого во время выката в расчёт
+      # попадают ещё живые старые поды, и обе новые реплики уезжают на один узел.
       topologySpreadConstraints:
         - maxSkew: 1
           topologyKey: kubernetes.io/hostname
           whenUnsatisfiable: DoNotSchedule
           labelSelector:
             matchLabels:
-              app: bulletin-board
-          # Считаем перекос только среди подов текущей ревизии. Без этого во
-          # время выката в расчёт попадают ещё живые старые поды, и обе новые
-          # реплики законно уезжают на один узел.
+              {{- include "bulletin-board.selectorLabels" . | nindent 14 }}
           matchLabelKeys:
             - pod-template-hash
-      # Времени хватает на preStop и на корректное завершение запросов.
-      terminationGracePeriodSeconds: 45
+      terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds }}
       containers:
         - name: app
-          image: ghcr.io/titanmen1/project-devops-deploy:latest
-          imagePullPolicy: Always
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
           ports:
             - name: http
-              containerPort: 8080
+              containerPort: {{ .Values.service.targetPort }}
             - name: management
-              containerPort: 9090
+              containerPort: {{ .Values.service.managementPort }}
           envFrom:
             - configMapRef:
-                name: bulletin-config
+                name: {{ include "bulletin-board.name" . }}-config
             - secretRef:
-                name: bulletin-secret
+                name: {{ .Values.secret.existingSecret }}
           # Micrometer вешает эти значения метками на все метрики приложения,
           # поэтому серии разных реплик не сливаются в Monitoring.
           env:
@@ -65,62 +65,54 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: spec.nodeName
-          # Под исчезает из endpoints не мгновенно: балансировщик успевает
-          # послать запрос в уже удаляемый под. Пауза перед остановкой даёт
-          # правилам обновиться — без неё часть запросов при выкате рвётся.
+          # Под исчезает из endpoints не мгновенно: пауза даёт правилам
+          # обновиться, без неё часть запросов при выкате рвётся.
           lifecycle:
             preStop:
               exec:
-                command: ["sh", "-c", "sleep 10"]
+                command: ["sh", "-c", "sleep {{ .Values.preStopSleepSeconds }}"]
           resources:
-            requests:
-              cpu: "200m"
-              memory: "512Mi"
-            limits:
-              cpu: "1"
-              memory: "1Gi"
-          # Spring Boot поднимается около 30 секунд. Пока идёт старт, за подом
+            {{- toYaml .Values.resources | nindent 12 }}
+          # Spring Boot поднимается около 30 секунд: пока идёт старт, за подом
           # следит startupProbe, и liveness не успевает его убить.
           startupProbe:
             httpGet:
-              path: /actuator/health/readiness
+              path: {{ .Values.probes.readinessPath }}
               port: management
             periodSeconds: 5
             failureThreshold: 30
           readinessProbe:
             httpGet:
-              path: /actuator/health/readiness
+              path: {{ .Values.probes.readinessPath }}
               port: management
             periodSeconds: 10
             timeoutSeconds: 3
             failureThreshold: 3
           livenessProbe:
             httpGet:
-              path: /actuator/health/liveness
+              path: {{ .Values.probes.livenessPath }}
               port: management
             periodSeconds: 20
             timeoutSeconds: 3
             failureThreshold: 3
-
+        {{- if .Values.metricsAgent.enabled }}
         # Забирает метрики Actuator этого пода и отправляет их в Yandex
         # Monitoring. Авторизуется через метаданные узла — ключей нет.
         - name: unified-agent
-          image: cr.yandex/yc/unified-agent:latest
+          image: {{ .Values.metricsAgent.image }}
           resources:
-            requests:
-              cpu: "50m"
-              memory: "64Mi"
-            limits:
-              cpu: "200m"
-              memory: "192Mi"
+            {{- toYaml .Values.metricsAgent.resources | nindent 12 }}
           volumeMounts:
             - name: unified-agent-config
               mountPath: /etc/yandex/unified_agent/conf.d/
             - name: unified-agent-data
               mountPath: /var/lib/yandex/unified_agent/main
+        {{- end }}
+      {{- if .Values.metricsAgent.enabled }}
       volumes:
         - name: unified-agent-config
           configMap:
-            name: unified-agent-config
+            name: {{ .Values.metricsAgent.configMap }}
         - name: unified-agent-data
           emptyDir: {}
+      {{- end }}
