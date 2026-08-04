@@ -1,0 +1,68 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bulletin-board
+  namespace: bulletins
+  labels:
+    app: bulletin-board
+spec:
+  replicas: 2
+  # maxUnavailable: 0 — во время выката всегда остаётся полный набор рабочих
+  # подов, новый поднимается сверх него.
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app: bulletin-board
+  template:
+    metadata:
+      labels:
+        app: bulletin-board
+    spec:
+      containers:
+        - name: app
+          image: ghcr.io/titanmen1/project-devops-deploy:latest
+          imagePullPolicy: Always
+          ports:
+            - name: http
+              containerPort: 8080
+            - name: management
+              containerPort: 9090
+          envFrom:
+            - configMapRef:
+                name: bulletin-config
+            - secretRef:
+                name: bulletin-secret
+          resources:
+            requests:
+              cpu: "200m"
+              memory: "512Mi"
+            limits:
+              cpu: "1"
+              memory: "1Gi"
+          # Spring Boot поднимается около 30 секунд. Пока идёт старт, за подом
+          # следит startupProbe, и liveness не успевает его убить.
+          startupProbe:
+            httpGet:
+              path: /actuator/health/readiness
+              port: management
+            periodSeconds: 5
+            failureThreshold: 30
+          readinessProbe:
+            httpGet:
+              path: /actuator/health/readiness
+              port: management
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: management
+            periodSeconds: 20
+            timeoutSeconds: 3
+            failureThreshold: 3

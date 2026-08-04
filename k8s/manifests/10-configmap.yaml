@@ -1,0 +1,17 @@
+---
+# Несекретная часть конфигурации. Доступы к базе и Object Storage лежат
+# отдельно в Secret, чтобы их не было в репозитории.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: bulletin-config
+  namespace: bulletins
+data:
+  SPRING_PROFILES_ACTIVE: "prod"
+  MANAGEMENT_SERVER_PORT: "9090"
+  STORAGE_S3_ENDPOINT: "https://storage.yandexcloud.net"
+  STORAGE_S3_BUCKET: "bulletins-319-media"
+  STORAGE_S3_REGION: "ru-central1"
+  # Heap считается от лимита памяти контейнера, но задаём явно, чтобы предел
+  # не зависел от того, как JVM прочитает cgroup.
+  JAVA_OPTS: "-Xms256m -Xmx640m"

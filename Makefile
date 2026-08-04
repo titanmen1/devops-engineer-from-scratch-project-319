@@ -1,8 +1,10 @@
 TF_DIR := terraform
 BACKEND_CREDENTIALS := $(TF_DIR)/.backend-credentials
+NAMESPACE := bulletins
 
 .PHONY: tf-bootstrap tf-init tf-plan tf-apply tf-destroy tf-output \
-	tf-fmt tf-validate tf-lint kubeconfig lint test
+	tf-fmt tf-validate tf-lint kubeconfig lint test \
+	k8s-secret k8s-apply k8s-status k8s-forward k8s-logs k8s-rollout
 
 # Доступы к бакету с состоянием и параметры облака подставляются в окружение
 # каждой команды Terraform: в репозитории их нет, а IAM-токен живёт 12 часов и
@@ -60,3 +62,32 @@ test: tf-validate
 kubeconfig:
 	$(tf_env) && yc managed-kubernetes cluster get-credentials \
 		--id "$$(terraform -chdir=$(TF_DIR) output -raw k8s_cluster_id)" --external --force
+
+# --- Приложение --------------------------------------------------------------
+
+# Секрет собирается из выводов Terraform и в репозиторий не попадает.
+k8s-secret:
+	kubectl apply -f k8s/manifests/00-namespace.yaml
+	$(tf_env) && kubectl -n $(NAMESPACE) create secret generic bulletin-secret \
+		--from-literal=SPRING_DATASOURCE_URL="$$(terraform -chdir=$(TF_DIR) output -raw db_url)" \
+		--from-literal=SPRING_DATASOURCE_USERNAME="$$(terraform -chdir=$(TF_DIR) output -raw db_user)" \
+		--from-literal=SPRING_DATASOURCE_PASSWORD="$$(terraform -chdir=$(TF_DIR) output -raw db_password)" \
+		--from-literal=STORAGE_S3_ACCESSKEY="$$(terraform -chdir=$(TF_DIR) output -raw storage_access_key)" \
+		--from-literal=STORAGE_S3_SECRETKEY="$$(terraform -chdir=$(TF_DIR) output -raw storage_secret_key)" \
+		--dry-run=client -o yaml | kubectl apply -f -
+
+k8s-apply:
+	kubectl apply -f k8s/manifests/
+
+k8s-status:
+	kubectl -n $(NAMESPACE) get deploy,pods,svc -o wide
+
+k8s-rollout:
+	kubectl -n $(NAMESPACE) rollout status deployment/bulletin-board
+
+k8s-logs:
+	kubectl -n $(NAMESPACE) logs -l app=bulletin-board --tail 100 -f
+
+# Проверка приложения без внешнего доступа.
+k8s-forward:
+	kubectl -n $(NAMESPACE) port-forward svc/bulletin-board 8080:80

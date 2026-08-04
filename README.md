@@ -64,11 +64,32 @@ make tf-apply       # создание инфраструктуры (15–20 м�
 make kubeconfig     # доступ к кластеру
 ```
 
-После `make tf-apply` проверить кластер:
+## Выкат приложения
 
 ```bash
-kubectl get nodes
+make k8s-secret     # секрет приложения из выводов Terraform
+make k8s-apply      # namespace, ConfigMap, Deployment, Service
+make k8s-rollout    # дождаться готовности подов
+make k8s-status     # что получилось
 ```
+
+Приложение живёт в namespace `bulletins`. Конфигурация разложена по двум
+объектам: несекретные параметры — в ConfigMap `bulletin-config`, доступы к базе
+и Object Storage — в Secret `bulletin-secret`. Секрет собирается из выводов
+Terraform командой `make k8s-secret` и в репозиторий не попадает; образец полей
+лежит в [k8s/secret.example.yaml](k8s/secret.example.yaml).
+
+Проверить приложение без внешнего доступа:
+
+```bash
+make k8s-forward
+curl http://localhost:8080/api/bulletins
+```
+
+Порт 8080 отдаёт приложение, 9090 — Actuator. Probes ходят именно в 9090:
+`/actuator/health/readiness` и `/actuator/health/liveness`. Пока Spring Boot
+стартует (около 30 секунд), под держит startupProbe, поэтому liveness не
+перезапускает его на старте.
 
 ## Terraform
 
@@ -127,6 +148,9 @@ make test   # terraform init -backend=false + terraform validate
 ```text
 .
 ├── bin/tf-bootstrap.sh      # разовая подготовка бакета для состояния
+├── k8s/
+│   ├── manifests/           # namespace, ConfigMap, Deployment, Service
+│   └── secret.example.yaml  # образец секрета, реальные значения не в git
 ├── terraform/               # инфраструктура Yandex Cloud
 ├── docker-compose.yaml      # локальный прогон приложения
 ├── Makefile                 # все команды проекта
