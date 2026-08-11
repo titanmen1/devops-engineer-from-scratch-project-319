@@ -8,7 +8,7 @@ Kubernetes. Вся инфраструктура описана в Terraform и �
 командой: сеть, кластер, управляемый PostgreSQL, Object Storage и Lockbox для
 секретов.
 
-**Приложение: http://158.160.197.20**
+**Приложение: http://158.160.145.165**
 
 Исходный код приложения: [titanmen1/project-devops-deploy](https://github.com/titanmen1/project-devops-deploy).
 Образ собирается в CI и публикуется в GitHub Container Registry:
@@ -28,7 +28,7 @@ Yandex Cloud, зона ru-central1-d
 │
 ├── Managed Kubernetes bulletins-319-k8s (зональный мастер, публичный API)
 │   └── группа узлов bulletins-319-ng — 2 узла, 2 vCPU × 20%, 4 ГБ
-│       ├── ingress-nginx → публичный адрес 158.160.197.20
+│       ├── ingress-nginx → публичный адрес 158.160.145.165
 │       └── namespace bulletins: Deployment, Service, Ingress, PDB, HPA
 │
 ├── Managed PostgreSQL bulletins-319-pg (b2.medium, доступен только из кластера)
@@ -72,10 +72,9 @@ make kubeconfig         # доступ к кластеру
 
 make ingress-install    # ingress-контроллер на зарезервированном адресе
 make secrets-install    # External Secrets Operator и ключ для чтения Lockbox
-make deploy             # выкат приложения Helm-чартом
+make deploy             # приложение Helm-чартом (вместе с sidecar метрик)
 
 make logging-install    # сбор логов подов в Cloud Logging
-make monitoring-install # sidecar с метриками для Yandex Monitoring
 
 make smoke              # проверка приложения снаружи
 ```
@@ -94,7 +93,7 @@ make smoke              # проверка приложения снаружи
 | `make secrets-install` / `secrets-status` | Lockbox через External Secrets Operator |
 | `make ingress-install` / `ingress-ip` | внешний доступ |
 | `make logging-install` / `logs-cloud` | логи в Cloud Logging |
-| `make monitoring-install` | метрики приложения в Monitoring |
+| `make monitoring-install` | включить метрики на уже развёрнутом релизе |
 | `make smoke` | проверка приложения по публичному адресу |
 | `make lint` / `test` | проверки Terraform и Helm |
 
@@ -131,10 +130,26 @@ make ingress-ip        # какой это адрес
 make smoke             # проверка приложения снаружи
 ```
 
-Приложение доступно по адресу **http://158.160.197.20**.
+Приложение доступно по адресу **http://158.160.145.165**.
 
 Правило Ingress описано без `host`, поэтому принимает запросы и по адресу, и по
 доменному имени, если его позже привяжут к этому адресу.
+
+Если после `make ingress-install` приложение недоступно снаружи, а балансировщик
+в консоли «Принимает трафик» — проверьте сам зарезервированный адрес. Бывает,
+что Yandex Cloud выдаёт публичный IP, через который проходит ICMP (`ping`), но
+не устанавливается TCP-соединение. Балансировщик при этом здоров, healthcheck
+зелёный, изнутри кластера всё отвечает `200` — снаружи глухой таймаут. Лечится
+пересозданием адреса:
+
+```bash
+terraform -chdir=terraform apply -replace=yandex_vpc_address.ingress
+make ingress-install   # контроллер занимает новый адрес
+```
+
+Диагностика: `ping` идёт, а `nc -z <ip> 80` показывает таймаут (не «refused») —
+почти наверняка дело в адресе, а не в кластере. Проверить доступность можно с
+внешних нод (например, через check-host.net), чтобы исключить свою сеть.
 
 ## Масштабирование и релизы без простоя
 
@@ -160,7 +175,7 @@ HorizontalPodAutoscaler (*templates/hpa.yaml*) держит от 2 до 4 реп
 
 ```bash
 # в одном терминале — непрерывные запросы
-while true; do curl -s -o /dev/null -w '%{http_code}\n' http://158.160.197.20/api/bulletins; sleep 0.3; done
+while true; do curl -s -o /dev/null -w '%{http_code}\n' http://158.160.145.165/api/bulletins; sleep 0.3; done
 
 # в другом — смена версии образа
 kubectl -n bulletins set image deployment/bulletin-board \
@@ -187,12 +202,13 @@ k8s/bulletin-board/
 ├── values.yaml              # значения по умолчанию (прод)
 ├── values-dev.yaml          # окружение для проверок
 └── templates/
-    ├── _helpers.tpl         # имена и метки
-    ├── namespace.yaml       # выключен: namespace заводит --create-namespace
+    ├── _helpers.tpl                # имена и метки
+    ├── namespace.yaml              # выключен: namespace заводит --create-namespace
     ├── configmap.yaml
-    ├── secret.yaml          # выключен: путь без Lockbox
-    ├── secretstore.yaml     # доступ к Lockbox
-    ├── externalsecret.yaml  # секрет приложения из Lockbox
+    ├── unified-agent-config.yaml   # конфиг sidecar с метриками
+    ├── secret.yaml                 # выключен: путь без Lockbox
+    ├── secretstore.yaml            # доступ к Lockbox
+    ├── externalsecret.yaml         # секрет приложения из Lockbox
     ├── deployment.yaml
     ├── service.yaml
     ├── ingress.yaml
@@ -338,9 +354,11 @@ make logs-cloud        # последние 20 записей из Cloud Logging
 | Процессор, память, перезапуски подов | собирает сам Managed Kubernetes | `managed-kubernetes` |
 | HTTP-запросы, задержки, JVM, логи по уровням | sidecar Unified Agent в поде приложения | `custom`, префикс `bulletins.` |
 
-```bash
-make monitoring-install   # ConfigMap с конфигом агента и выкат sidecar
-```
+Sidecar с метриками входит в чарт и разворачивается вместе с приложением
+(`make deploy`) — его ConfigMap описан в *templates/unified-agent-config.yaml*,
+идентификатор каталога подставляется из вывода Terraform `folder_id`. Если
+метрики выключали (`metricsAgent.enabled=false`), вернуть их на уже
+развёрнутом релизе можно командой `make monitoring-install`.
 
 Агент ездит sidecar-контейнером, а не отдельным Deployment: иначе он опрашивал
 бы приложение через Service, и метрики двух реплик перемешивались бы. Метки
@@ -445,9 +463,8 @@ make test   # terraform init -backend=false + terraform validate
 ├── assets/                      # скриншоты дашборда и алертов
 ├── bin/tf-bootstrap.sh          # разовая подготовка бакета для состояния
 ├── k8s/
-│   ├── bulletin-board/          # Helm-чарт приложения
+│   ├── bulletin-board/          # Helm-чарт приложения (в т.ч. sidecar метрик)
 │   ├── logging/                 # fluent-bit для Cloud Logging
-│   ├── monitoring/              # конфиг Unified Agent для метрик
 │   ├── ingress-nginx-values.yaml # values для чарта ingress-контроллера
 │   └── secret.example.yaml      # образец секрета, реальные значения не в git
 ├── terraform/                   # инфраструктура Yandex Cloud

@@ -1,0 +1,49 @@
+{{- if .Values.metricsAgent.enabled }}
+{{- if not .Values.metricsAgent.folderId }}
+{{- fail "metricsAgent.folderId обязателен при включённом metricsAgent (передаётся из вывода Terraform folder_id)" }}
+{{- end }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Values.metricsAgent.configMap }}
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "bulletin-board.labels" . | nindent 4 }}
+data:
+  config.yml: |
+    status:
+      port: 16241
+    storages:
+      - name: main
+        plugin: fs
+        config:
+          directory: /var/lib/yandex/unified_agent/main
+          max_partition_size: 10mb
+          max_segment_size: 1mb
+    channels:
+      - name: cloud_monitoring
+        channel:
+          pipe:
+            - storage_ref:
+                name: main
+          output:
+            plugin: yc_metrics
+            config:
+              folder_id: {{ .Values.metricsAgent.folderId | quote }}
+              iam:
+                cloud_meta: {}
+    routes:
+      - input:
+          plugin: metrics_pull
+          config:
+            url: http://localhost:{{ .Values.service.managementPort }}/actuator/prometheus
+            format:
+              prometheus: {}
+            namespace: bulletins
+            poll_period: 30s
+            metric_name_label: sensor
+        channel:
+          channel_ref:
+            name: cloud_monitoring
+{{- end }}

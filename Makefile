@@ -70,6 +70,7 @@ deploy:
 	$(tf_env) && helm upgrade --install $(RELEASE) $(CHART) \
 		--namespace $(NAMESPACE) --create-namespace \
 		--set externalSecrets.lockboxSecretId="$$(terraform -chdir=$(TF_DIR) output -raw lockbox_secret_id)" \
+		--set metricsAgent.folderId="$$(terraform -chdir=$(TF_DIR) output -raw folder_id)" \
 		--rollback-on-failure --timeout 10m
 
 deploy-dev:
@@ -85,8 +86,8 @@ helm-history:
 	helm -n $(NAMESPACE) history $(RELEASE)
 
 helm-lint:
-	helm lint $(CHART) --set externalSecrets.lockboxSecretId=lint
-	helm template $(RELEASE) $(CHART) --set externalSecrets.lockboxSecretId=lint >/dev/null
+	helm lint $(CHART) --set externalSecrets.lockboxSecretId=lint --set metricsAgent.folderId=lint
+	helm template $(RELEASE) $(CHART) --set externalSecrets.lockboxSecretId=lint --set metricsAgent.folderId=lint >/dev/null
 	helm template $(RELEASE) $(CHART) -f $(CHART)/values-dev.yaml >/dev/null
 
 uninstall:
@@ -139,14 +140,11 @@ logging-install:
 	kubectl -n logging rollout status daemonset/fluent-bit --timeout=5m
 
 monitoring-install:
-	$(tf_env) && sed "s|__FOLDER_ID__|$$(terraform -chdir=$(TF_DIR) output -raw folder_id)|" \
-		k8s/monitoring/unified-agent.yml > /tmp/unified-agent.yml
-	kubectl -n $(NAMESPACE) create configmap unified-agent-config \
-		--from-file=config.yml=/tmp/unified-agent.yml \
-		--dry-run=client -o yaml | kubectl apply -f -
-	rm -f /tmp/unified-agent.yml
-	kubectl -n $(NAMESPACE) rollout restart deployment/$(RELEASE)
-	kubectl -n $(NAMESPACE) rollout status deployment/$(RELEASE) --timeout=10m
+	$(tf_env) && helm upgrade --install $(RELEASE) $(CHART) \
+		--namespace $(NAMESPACE) --reuse-values \
+		--set metricsAgent.enabled=true \
+		--set metricsAgent.folderId="$$(terraform -chdir=$(TF_DIR) output -raw folder_id)" \
+		--timeout 10m
 
 logs-cloud:
 	@$(tf_env) && yc logging read \

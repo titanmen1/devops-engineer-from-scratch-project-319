@@ -72,6 +72,7 @@ metricsAgent:
   enabled: true
   image: cr.yandex/yc/unified-agent:latest
   configMap: unified-agent-config
+  folderId: ""
   resources:
     requests:
       cpu: 50m

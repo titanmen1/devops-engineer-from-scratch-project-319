@@ -22,6 +22,9 @@ spec:
         {{- include "bulletin-board.selectorLabels" . | nindent 8 }}
       annotations:
         checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        {{- if .Values.metricsAgent.enabled }}
+        checksum/agent-config: {{ include (print $.Template.BasePath "/unified-agent-config.yaml") . | sha256sum }}
+        {{- end }}
     spec:
       topologySpreadConstraints:
         - maxSkew: 1
