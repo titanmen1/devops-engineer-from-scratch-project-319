@@ -4,7 +4,10 @@ controller:
 
   service:
     type: LoadBalancer
-    externalTrafficPolicy: Cluster
+    # Local сохраняет реальный IP клиента в логах и X-Forwarded-For. Реплик
+    # контроллера столько же, сколько узлов, поэтому узла без бэкенда — а с ним
+    # и потери доступности — не возникает.
+    externalTrafficPolicy: Local
 
   resources:
     requests:
@@ -17,10 +20,13 @@ controller:
   metrics:
     enabled: true
 
+  # DoNotSchedule здесь осознанно: при externalTrafficPolicy: Local узел без
+  # пода контроллера не отвечает на проверки балансировщика, поэтому реплики
+  # обязаны стоять на разных узлах.
   topologySpreadConstraints:
     - maxSkew: 1
       topologyKey: kubernetes.io/hostname
-      whenUnsatisfiable: ScheduleAnyway
+      whenUnsatisfiable: DoNotSchedule
       labelSelector:
         matchLabels:
           app.kubernetes.io/name: ingress-nginx
