@@ -6,4 +6,8 @@ service_account_key_file = "~/.yc-keys/terraform-sa.json"
 
 bucket_name = "bulletins-319-media"
 
+# Адреса, с которых открыт API мастера. Без этой строки API доступен из всего
+# интернета. Свой адрес: curl -s ifconfig.me
+admin_cidr_blocks = ["203.0.113.10/32"]
+
 node_preemptible = false

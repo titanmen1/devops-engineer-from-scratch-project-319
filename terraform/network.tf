@@ -33,6 +33,8 @@ resource "yandex_vpc_security_group" "k8s" {
     v4_cidr_blocks = [var.subnet_cidr]
   }
 
+  # Диапазон нужен сетевому балансировщику, сузить его нельзя. Побочный
+  # эффект: любой NodePort-сервис кластера становится публичным.
   ingress {
     protocol       = "TCP"
     description    = "Диапазон NodePort: через него балансировщик отдаёт трафик наружу"
@@ -44,14 +46,14 @@ resource "yandex_vpc_security_group" "k8s" {
   ingress {
     protocol       = "TCP"
     description    = "Доступ к API кластера снаружи"
-    v4_cidr_blocks = ["0.0.0.0/0"]
+    v4_cidr_blocks = var.admin_cidr_blocks
     port           = 6443
   }
 
   ingress {
     protocol       = "TCP"
     description    = "Доступ к API кластера снаружи через 443"
-    v4_cidr_blocks = ["0.0.0.0/0"]
+    v4_cidr_blocks = var.admin_cidr_blocks
     port           = 443
   }
 

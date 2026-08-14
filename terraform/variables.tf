@@ -147,6 +147,12 @@ variable "logs_retention_period" {
   default     = "168h"
 }
 
+variable "admin_cidr_blocks" {
+  description = "Адреса, с которых открыт доступ к API мастера (6443 и 443). По умолчанию — весь интернет, задайте свой адрес в terraform.tfvars"
+  type        = list(string)
+  default     = ["0.0.0.0/0"]
+}
+
 variable "bucket_name" {
   description = "Имя бакета для картинок объявлений (уникально в пределах Object Storage)"
   type        = string
