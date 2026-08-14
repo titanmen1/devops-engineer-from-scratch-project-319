@@ -7,7 +7,9 @@ metadata:
   labels:
     {{- include "bulletin-board.labels" . | nindent 4 }}
 spec:
+  {{- if not .Values.hpa.enabled }}
   replicas: {{ .Values.replicaCount }}
+  {{- end }}
   strategy:
     type: RollingUpdate
     rollingUpdate:
@@ -26,10 +28,16 @@ spec:
         checksum/agent-config: {{ include (print $.Template.BasePath "/unified-agent-config.yaml") . | sha256sum }}
         {{- end }}
     spec:
+      automountServiceAccountToken: false
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
       topologySpreadConstraints:
         - maxSkew: 1
           topologyKey: kubernetes.io/hostname
-          whenUnsatisfiable: DoNotSchedule
+          # ScheduleAnyway, а не DoNotSchedule: на двух узлах жёсткое правило
+          # при сливе узла оставило бы вторую реплику в Pending — ровно в тот
+          # момент, ради которого написан PDB.
+          whenUnsatisfiable: ScheduleAnyway
           labelSelector:
             matchLabels:
               {{- include "bulletin-board.selectorLabels" . | nindent 14 }}
@@ -40,6 +48,8 @@ spec:
         - name: app
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
           ports:
             - name: http
               containerPort: {{ .Values.service.targetPort }}
@@ -50,6 +60,7 @@ spec:
                 name: {{ include "bulletin-board.name" . }}-config
             - secretRef:
                 name: {{ .Values.secret.existingSecret }}
+                optional: {{ .Values.secret.optional }}
           env:
             - name: MANAGEMENT_METRICS_TAGS_POD
               valueFrom:
@@ -85,6 +96,11 @@ spec:
             periodSeconds: 20
             timeoutSeconds: 3
             failureThreshold: 3
+          volumeMounts:
+            # Корень только на чтение, поэтому JVM и приложению нужен
+            # writable /tmp: hsperfdata и временные файлы загрузок.
+            - name: tmp
+              mountPath: /tmp
         {{- if .Values.metricsAgent.enabled }}
         - name: unified-agent
           image: {{ .Values.metricsAgent.image }}
@@ -96,11 +112,13 @@ spec:
             - name: unified-agent-data
               mountPath: /var/lib/yandex/unified_agent/main
         {{- end }}
-      {{- if .Values.metricsAgent.enabled }}
       volumes:
+        - name: tmp
+          emptyDir: {}
+        {{- if .Values.metricsAgent.enabled }}
         - name: unified-agent-config
           configMap:
             name: {{ .Values.metricsAgent.configMap }}
         - name: unified-agent-data
           emptyDir: {}
-      {{- end }}
+        {{- end }}

@@ -18,6 +18,16 @@ metricsAgent:
 externalSecrets:
   enabled: false
 
+# ESO выключен и секрет никто не создаёт, поэтому envFrom не должен требовать
+# его наличия — иначе поды встают в CreateContainerConfigError.
+secret:
+  optional: true
+
+# Профиль dev: H2 в памяти и локальное хранилище картинок, доступы к внешним
+# сервисам не нужны.
+config:
+  SPRING_PROFILES_ACTIVE: dev
+
 resources:
   requests:
     cpu: 100m
