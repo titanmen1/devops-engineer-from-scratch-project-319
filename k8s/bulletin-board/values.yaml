@@ -3,12 +3,18 @@
 namespace: bulletins
 createNamespace: false
 
+# Задаётся, только когда HPA выключен: иначе каждый helm upgrade сбрасывал бы
+# число реплик к значению из values и отменял работу автоскейлера.
 replicaCount: 2
 
 image:
   repository: ghcr.io/titanmen1/project-devops-deploy
-  tag: latest
-  pullPolicy: Always
+  # Тег фиксированный: CI публикует main-<sha>, и только с ним helm rollback
+  # действительно возвращает предыдущую версию образа.
+  # ВНИМАНИЕ: обновить на образ, собранный после правки logback-spring.xml в
+  # репозитории приложения, — иначе не стартуют podSecurityContext ниже.
+  tag: main-36200c4
+  pullPolicy: IfNotPresent
 
 service:
   type: ClusterIP
@@ -27,13 +33,17 @@ config:
   STORAGE_S3_ENDPOINT: https://storage.yandexcloud.net
   STORAGE_S3_BUCKET: bulletins-319-media
   STORAGE_S3_REGION: ru-central1
-  JAVA_OPTS: -Xms256m -Xmx640m
+  # Не JAVA_OPTS: ENTRYPOINT образа в exec-форме, переменные в нём не
+  # раскрываются. JAVA_TOOL_OPTIONS JVM читает из окружения сама.
+  JAVA_TOOL_OPTIONS: -Xms256m -Xmx640m
   MANAGEMENT_METRICS_ENABLE_EXECUTOR: "false"
   MANAGEMENT_METRICS_ENABLE_JDBC: "false"
 
 secret:
   existingSecret: bulletin-secret
   create: false
+  # В проде секрет обязателен: без него под не должен стартовать молча.
+  optional: false
   values: {}
 
 externalSecrets:
@@ -42,6 +52,28 @@ externalSecrets:
   authorizedKeySecret: yc-sa-key
   lockboxSecretId: ""
   refreshInterval: 1h
+
+# Образ собран без USER и работает от root, поэтому non-root задаётся здесь.
+# Проверено запуском образа: до правки logback-spring.xml в репозитории
+# приложения под UID 1000 приложение падало на старте — файловый аппендер
+# логов писал в рабочий каталог /app, который принадлежит root. Включать
+# runAsNonRoot можно только на образе с этой правкой.
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  runAsGroup: 1000
+  fsGroup: 1000
+  seccompProfile:
+    type: RuntimeDefault
+
+containerSecurityContext:
+  allowPrivilegeEscalation: false
+  # Корень только на чтение; всё, что приложению нужно писать, лежит в
+  # смонтированном emptyDir /tmp — туда же теперь пишет и логовый аппендер.
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop:
+      - ALL
 
 resources:
   requests:
